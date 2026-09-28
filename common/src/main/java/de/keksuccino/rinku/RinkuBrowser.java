@@ -2,6 +2,8 @@ package de.keksuccino.rinku;
 
 import com.mojang.logging.LogUtils;
 import de.keksuccino.rinku.listeners.RinkuCursorChangeListener;
+import de.keksuccino.rinku.listeners.RinkuUploadListener;
+import com.mojang.blaze3d.opengl.GlStateManager;
 import com.mojang.blaze3d.systems.RenderSystem;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.input.KeyEvent;
@@ -18,6 +20,8 @@ import org.slf4j.Logger;
 import java.awt.*;
 import java.nio.ByteBuffer;
 import java.util.Objects;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
 import static com.mojang.blaze3d.platform.InputConstants.*;
@@ -44,6 +48,11 @@ public class RinkuBrowser extends CefBrowserOsr {
     private final BrowserCloseController closeController = new BrowserCloseController();
     private final AtomicBoolean deferredNativeClose = new AtomicBoolean();
     private final PopupPaintState popupPaintState = new PopupPaintState();
+    /** GTWebUI fork: dirty-rect view paint path (off-render-thread OnPaint). */
+    private final RetainedPaintSurface retainedView;
+    /** GTWebUI fork: number of the newest CEF view paint (1, 2, ...). */
+    private final AtomicLong paintFrame = new AtomicLong();
+    private final CopyOnWriteArrayList<RinkuUploadListener> uploadListeners = new CopyOnWriteArrayList<>();
     private boolean rendererInitialized;
     private boolean rendererCleanupStarted;
     private int renderOperationDepth;
@@ -110,6 +119,7 @@ public class RinkuBrowser extends CefBrowserOsr {
     public RinkuBrowser(RinkuClient client, String url, boolean transparent) {
         super(client.getHandle(), url, transparent, null);
         renderer = new RinkuRenderer(transparent);
+        retainedView = new RetainedPaintSurface(transparent);
         cursorChangeListener = (cefCursorID) -> setCursor(resolveCursorType(cefCursorID));
         if (!RinkuRenderCoordinator.register(this)) {
             IllegalStateException registrationFailure = new IllegalStateException("Cannot create a Rinku browser after render shutdown has started");
@@ -174,6 +184,33 @@ public class RinkuBrowser extends CefBrowserOsr {
 
     public RinkuDragContext getDragContext() {
         return dragContext;
+    }
+
+    /** GTWebUI fork: render-thread callback after each view upload (see {@link RinkuUploadListener}). */
+    public void addUploadListener(RinkuUploadListener listener) {
+        uploadListeners.add(Objects.requireNonNull(listener, "listener"));
+    }
+
+    public void removeUploadListener(RinkuUploadListener listener) {
+        uploadListeners.remove(listener);
+    }
+
+    /** GTWebUI fork: number of the newest CEF view paint received (0 before the first paint). */
+    public long getLatestPaintFrame() {
+        return paintFrame.get();
+    }
+
+    /** GTWebUI fork: dirty-rect paint path counters (off-render-thread platforms). */
+    public RinkuPaintStats getPaintStats() {
+        return retainedView.stats();
+    }
+
+    /**
+     * GTWebUI fork: alpha (0-255) of the latest painted view pixel, for click-through hit tests on transparent
+     * browsers. -1 when there is no alpha copy yet (opaque browser, no paint, or on the render-thread paint path).
+     */
+    public int alphaAt(int x, int y) {
+        return retainedView.alphaAt(x, y);
     }
 
     // Popups
@@ -249,6 +286,20 @@ public class RinkuBrowser extends CefBrowserOsr {
     }
 
     private boolean onPaint(boolean popup, Rectangle[] dirtyRects, ByteBuffer buffer, int width, int height) {
+        if (!popup && !RenderSystem.isOnRenderThread()) {
+            // GTWebUI fork: copy only the dirty rects and merge pending regions (no full-frame mailbox copy).
+            // Runs outside paintCallbackLock, which the render thread holds while uploading: the CEF thread only waits
+            // for the short region memcpy inside RetainedPaintSurface, never for GL.
+            if (!asyncPaintBufferLeases.isAccepting() || closeController.isCloseRequested()) {
+                return false;
+            }
+            Minecraft minecraft = Minecraft.getInstance();
+            if (minecraft == null || !minecraft.isRunning()) {
+                return false;
+            }
+            retainedView.accept(dirtyRects, buffer, width, height, paintFrame.incrementAndGet());
+            return true;
+        }
         paintCallbackLock.lock();
         try {
             if (!asyncPaintBufferLeases.isAccepting() || closeController.isCloseRequested()) {
@@ -266,9 +317,13 @@ public class RinkuBrowser extends CefBrowserOsr {
                 long popupStateGeneration = popupPaintState.generation();
                 PaintSurface surface = PaintSurface.fromPopup(popup);
                 boolean forceFullUpload = asyncPaintBufferLeases.consumeResync(surface);
+                long frame = popup ? paintFrame.get() : paintFrame.incrementAndGet();
                 beginRenderOperation();
                 try {
                     onPaintRenderThread(popup, dirtyRectsCopy, buffer, width, height, popupRectSnapshot, showPopupSnapshot, popupStateGeneration, forceFullUpload);
+                    if (!popup) {
+                        notifyUploaded(frame, dirtyRectsCopy, forceFullUpload);
+                    }
                 } catch (Throwable failure) {
                     if (popup) {
                         invalidateRetainedPopupPixels();
@@ -350,9 +405,46 @@ public class RinkuBrowser extends CefBrowserOsr {
         initializeRendererOnRenderThread();
         beginRenderOperation();
         try {
+            drainRetainedViewOnRenderThread();
             asyncPaintBufferLeases.drain(MAX_PENDING_PAINT_STREAMS);
         } finally {
             endRenderOperation();
+        }
+    }
+
+    /** GTWebUI fork: upload the regions accumulated by {@link RetainedPaintSurface} since the last frame. */
+    private void drainRetainedViewOnRenderThread() {
+        boolean resync = asyncPaintBufferLeases.consumeResync(PaintSurface.VIEW);
+        // The staging buffer only holds the drained regions, so any path that uploads the whole frame needs a full drain
+        boolean forceFull = resync || !renderer.supportsDirtyRectUpload();
+        RetainedPaintSurface.Drained drained = retainedView.drain(forceFull);
+        if (drained == null) {
+            if (resync) {
+                // nothing retained yet (render-thread paint platform or no paint so far): keep the request
+                asyncPaintBufferLeases.requireResync(PaintSurface.VIEW);
+            }
+            return;
+        }
+        paintCallbackLock.lock();
+        try {
+            onPaintRenderThread(false, drained.regions(), drained.buffer(), drained.width(), drained.height(),
+                    popupPaintState.geometry(), popupPaintState.visible(), popupPaintState.generation(), drained.full());
+        } catch (Throwable failure) {
+            asyncPaintBufferLeases.requireResync(PaintSurface.VIEW);
+            throw failure;
+        } finally {
+            paintCallbackLock.unlock();
+        }
+        notifyUploaded(drained.frame(), drained.regions(), drained.full());
+    }
+
+    private void notifyUploaded(long frame, Rectangle[] regions, boolean full) {
+        for (RinkuUploadListener listener : uploadListeners) {
+            try {
+                listener.onUploaded(this, frame, regions, full);
+            } catch (Throwable failure) {
+                LOGGER.warn("Browser upload listener failed.", failure);
+            }
         }
     }
 
@@ -868,6 +960,11 @@ public class RinkuBrowser extends CefBrowserOsr {
             asyncPaintBufferLeases.close();
         } catch (RuntimeException | Error paintFailure) {
             failure = paintFailure;
+        }
+        try {
+            retainedView.close();
+        } catch (RuntimeException | Error retainedFailure) {
+            failure = mergeFailure(failure, retainedFailure);
         }
         deferredNativeClose.set(true);
         try {
