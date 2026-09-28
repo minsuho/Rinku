@@ -60,7 +60,8 @@ public abstract class MixinMinecraft {
 
         AtomicInteger terminatedProcesses = new AtomicInteger(0);
         try {
-            ProcessHandle.allProcesses().forEach(processHandle -> {
+            // GTWebUI fork: only our own descendants. Another game instance's helpers (same install folder) stay alive.
+            ProcessHandle.current().descendants().forEach(processHandle -> {
                 try {
                     if (!shouldTerminateJcefHelper_RINKU(processHandle, rinkuLibrariesPath)) {
                         return;
@@ -96,13 +97,13 @@ public abstract class MixinMinecraft {
             return false;
         }
 
+        // Callers pass descendants of this process only (GTWebUI fork).
         if (isExecutableInRinkuLibraries_RINKU(processHandle, rinkuLibrariesPath)) {
             return true;
         }
 
         // Fallback for environments where executable path is unavailable.
-        return isDescendantOfCurrentProcess_RINKU(processHandle)
-                && commandLineContainsLibrariesPath_RINKU(processHandle, rinkuLibrariesPath);
+        return commandLineContainsLibrariesPath_RINKU(processHandle, rinkuLibrariesPath);
     }
 
     @Unique
@@ -160,22 +161,6 @@ public abstract class MixinMinecraft {
         return processHandle.info().commandLine()
                 .map(commandLine -> commandLine.toLowerCase(Locale.ROOT).contains(librariesPath))
                 .orElse(false);
-    }
-
-    @Unique
-    private static boolean isDescendantOfCurrentProcess_RINKU(ProcessHandle processHandle) {
-        long currentPid = ProcessHandle.current().pid();
-
-        Optional<ProcessHandle> currentParent = processHandle.parent();
-        while (currentParent.isPresent()) {
-            ProcessHandle parent = currentParent.get();
-            if (parent.pid() == currentPid) {
-                return true;
-            }
-            currentParent = parent.parent();
-        }
-
-        return false;
     }
 
     @Unique
