@@ -29,8 +29,16 @@ final class RetainedPaintSurface implements AutoCloseable {
     private final boolean keepAlpha;
     private ByteBuffer pixels, staging;
     private int width, height;
-    private volatile byte[] alpha;
-    private volatile int alphaWidth, alphaHeight;
+    /**
+     * Alpha copy, double-buffered: the CEF thread writes only {@code alphaBack}, then publishes it as {@code alphaFront}
+     * (one volatile write); the render thread reads only the published plane. The plane that was just retired misses
+     * the rects of that paint ({@code alphaBackStale}) and is brought up to date before the next write.
+     */
+    record AlphaPlane(byte[] data, int width, int height) {}
+
+    private volatile AlphaPlane alphaFront;
+    private byte[] alphaBack;
+    private final java.util.List<Rectangle> alphaBackStale = new java.util.ArrayList<>();
     private long latestFrame;
     private boolean closed;
 
@@ -69,22 +77,35 @@ final class RetainedPaintSurface implements AutoCloseable {
                 if (keepAlpha) {
                     byte[] a = new byte[w * h];
                     copyAlpha(srcAddr, w, a, new Rectangle(0, 0, w, h));
-                    alphaWidth = w;
-                    alphaHeight = h;
-                    alpha = a;
+                    alphaBack = a.clone();
+                    alphaBackStale.clear();
+                    alphaFront = new AlphaPlane(a, w, h);
                 }
                 pending.reset(w, h);
                 return;
             }
             long dstAddr = MemoryUtil.memAddress(pixels);
-            byte[] a = keepAlpha ? alpha : null;
+            AlphaPlane front = keepAlpha ? alphaFront : null;
+            byte[] back = front != null ? alphaBack : null;
+            if (back != null) {
+                // catch the back plane up with the rects it missed when it was retired
+                for (Rectangle st : alphaBackStale) copyAlphaPlane(front.data(), back, w, st);
+                alphaBackStale.clear();
+            }
             for (Rectangle r : dirty) {
                 Rectangle c = clip(r, w, h);
                 if (c == null) continue;
                 copyRows(srcAddr, dstAddr, w, c);
                 copiedBytes += (long) c.width * c.height * 4L;
-                if (a != null) copyAlpha(srcAddr, w, a, c);
+                if (back != null) {
+                    copyAlpha(srcAddr, w, back, c);
+                    alphaBackStale.add(c);
+                }
                 pending.add(c);
+            }
+            if (back != null) {
+                alphaBack = front.data();                      // retired plane; stale by alphaBackStale
+                alphaFront = new AlphaPlane(back, w, h);       // publish
             }
         } finally {
             lock.unlock();
@@ -124,10 +145,9 @@ final class RetainedPaintSurface implements AutoCloseable {
 
     /** Alpha (0–255) at a view pixel from the latest paint, or -1 without an alpha copy / outside the view. */
     int alphaAt(int x, int y) {
-        byte[] a = alpha;
-        int w = alphaWidth, h = alphaHeight;
-        if (a == null || x < 0 || y < 0 || x >= w || y >= h) return -1;
-        return a[y * w + x] & 0xFF;
+        AlphaPlane p = alphaFront;
+        if (p == null || x < 0 || y < 0 || x >= p.width() || y >= p.height()) return -1;
+        return p.data()[y * p.width() + x] & 0xFF;
     }
 
     RinkuPaintStats stats() {
@@ -149,7 +169,8 @@ final class RetainedPaintSurface implements AutoCloseable {
             if (pixels != null) MemoryUtil.memFree(pixels);
             if (staging != null) MemoryUtil.memFree(staging);
             pixels = staging = null;
-            alpha = null;
+            alphaFront = null;
+            alphaBack = null;
         } finally {
             lock.unlock();
         }
@@ -160,6 +181,13 @@ final class RetainedPaintSurface implements AutoCloseable {
         for (int row = 0; row < r.height; row++) {
             long off = ((long) (r.y + row) * stride + r.x) << 2;
             MemoryUtil.memCopy(src + off, dst + off, rowBytes);
+        }
+    }
+
+    private static void copyAlphaPlane(byte[] from, byte[] to, int stride, Rectangle r) {
+        for (int row = 0; row < r.height; row++) {
+            int base = (r.y + row) * stride + r.x;
+            System.arraycopy(from, base, to, base, r.width);
         }
     }
 
