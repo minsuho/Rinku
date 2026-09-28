@@ -314,6 +314,7 @@ subprojects {
                 "mod_name": mod_name,
                 "mod_id": mod_id,
                 "fork_mod_id": fork_mod_id,
+                "fork_version": fork_version,
                 "mod_version": mod_version,
                 "mod_description": mod_description,
                 "mod_license": mod_license,
