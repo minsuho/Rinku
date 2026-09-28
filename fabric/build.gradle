@@ -77,8 +77,10 @@ processResources {
 publishing {
     publications {
         mavenJava(MavenPublication) {
-            artifactId = "${mod_id}-fabric"
-            version = "${mod_version}-${minecraft_version}"
+            // GTWebUI fork coordinates: com.gitter.gtwebui:gtwebui_rinku-fabric:3.0.5-gtwebui.1-26.3
+            groupId "com.gitter.gtwebui"
+            artifactId "${fork_mod_id}-fabric"
+            version "${mod_version}-${fork_version}-${minecraft_version}"
             from components.java
             pom.withXml {
                 def deps = asNode().get('dependencies')
@@ -126,4 +128,9 @@ def stripModuleDepsTask = tasks.register("stripModuleDependencies") {
 
 tasks.named("generateMetadataFileForMavenJavaPublication") {
     finalizedBy(stripModuleDepsTask)
+}
+
+// GTWebUI fork: publishToMavenLocal also reads module.json written by stripModuleDependencies
+tasks.matching { it.name == "publishMavenJavaPublicationToMavenLocal" }.configureEach {
+    dependsOn("stripModuleDependencies")
 }

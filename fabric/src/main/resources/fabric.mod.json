@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "${fork_mod_id}",
-  "version": "${mod_version}",
+  "version": "${mod_version}-${fork_version}",
   "name": "${mod_name}",
   "description": "${mod_description}",
   "environment": "*",
