@@ -2,6 +2,7 @@ package de.keksuccino.rinku.util;
 
 import de.keksuccino.rinku.OSPlatform;
 import de.keksuccino.rinku.Rinku;
+import de.keksuccino.rinku.RinkuForkOptions;
 import de.keksuccino.rinku.RinkuSettings;
 import org.cef.CefApp;
 import org.cef.CefClient;
@@ -118,7 +119,19 @@ public final class CefUtil {
 
         CefSettings cefSettings = new CefSettings();
         cefSettings.windowless_rendering_enabled = true;
-        if (settings.isUsingCache()) {
+        Path forkRoot = RinkuForkOptions.rootCachePath(), forkCache = RinkuForkOptions.cachePath();
+        if (forkRoot != null && forkCache != null) {
+            // GTWebUI fork: per-instance profile slot instead of the PC-wide shared cache
+            try {
+                Files.createDirectories(forkCache);
+                cefSettings.root_cache_path = forkRoot.toString();
+                cefSettings.cache_path = forkCache.toString();
+                cefSettings.persist_session_cookies = true;
+                LOGGER.info("Using GTWebUI browser profile {} (root {})", forkCache, forkRoot);
+            } catch (IOException e) {
+                LOGGER.warn("Failed to create GTWebUI browser profile {}. Falling back to non-persistent browser data.", forkCache, e);
+            }
+        } else if (settings.isUsingCache()) {
             Path cachePath = resolvePersistentCefCachePath().toAbsolutePath();
             try {
                 Files.createDirectories(cachePath);
@@ -131,6 +144,15 @@ public final class CefUtil {
             }
         }
         cefSettings.log_severity = settings.getNativeCefLogSeverity();
+        Path forkLog = RinkuForkOptions.logFile();
+        if (forkLog != null) {
+            try {
+                Files.createDirectories(forkLog.getParent());
+                cefSettings.log_file = forkLog.toString();
+            } catch (IOException e) {
+                LOGGER.warn("Failed to create CEF log folder for {}", forkLog, e);
+            }
+        }
         cefSettings.background_color = cefSettings.new ColorType(0, 255, 255, 255);
         // Set the user agent if there's one defined in RinkuSettings
         if (settings.getUserAgent() != null) {
