@@ -97,7 +97,8 @@ public abstract class MixinMinecraft {
 
         AtomicInteger terminatedProcesses = new AtomicInteger(0);
         try {
-            ProcessHandle.allProcesses().forEach(processHandle -> {
+            // GTWebUI fork: only our own descendants. Another game instance's helpers (same install folder) stay alive.
+            ProcessHandle.current().descendants().forEach(processHandle -> {
                 try {
                     if (!shouldTerminateJcefHelper_Rinku(processHandle, rinkuLibrariesPath)) {
                         return;
