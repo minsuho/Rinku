@@ -106,7 +106,8 @@ public class RinkuRenderer {
     protected void onPaint(ByteBuffer buffer, int width, int height) {
         RenderSystem.assertOnRenderThread();
         // Create or recreate texture if size changed
-        if (texture == null || textureWidth != width || textureHeight != height) {
+        boolean fresh = texture == null || textureWidth != width || textureHeight != height;
+        if (fresh) {
             if (texture != null) {
                 texture.close();
             }
@@ -136,9 +137,14 @@ public class RinkuRenderer {
             GlStateManager._pixelStore(GL_UNPACK_SKIP_PIXELS, 0);
             GlStateManager._pixelStore(GL_UNPACK_SKIP_ROWS, 0);
             
-            // Upload the full texture
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0,
-                    GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, buffer);
+            // GTWebUI fork: re-specifying the storage every frame (glTexImage2D) cost ~4 ms at 1080p; the storage
+            // already exists at this size, so only the pixels are replaced
+            if (fresh) {
+                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0,
+                        GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, buffer);
+            } else {
+                glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, buffer);
+            }
             return;
         }
 
