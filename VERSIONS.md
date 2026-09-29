@@ -6,6 +6,14 @@ One fork branch per upstream Minecraft branch: `gtwebui/<upstream branch>`.
 | Fork branch | Upstream base | Rinku | JCEF commit | Fork version | Maven |
 |---|---|---|---|---|---|
 | `gtwebui/26.2.0` | `26.2.0` @ `2bc3852` (2026-09-19) | 3.0.5 | `2eb4ca2648bda91d1dfed81e9a37ba92e757aff9` | `gtwebui.1` | `com.gitter.gtwebui:gtwebui_rinku-fabric:3.0.5-gtwebui.1-26.2` |
+| `gtwebui/1.21.11` | `1.21.11` @ `81b89cd` (2026-09-19) | 3.0.5 | `2eb4ca2648bda91d1dfed81e9a37ba92e757aff9` | `gtwebui.1` | `com.gitter.gtwebui:gtwebui_rinku-fabric:3.0.5-gtwebui.1-1.21.11` |
+| `gtwebui/1.21.1` | `1.21.1` @ `3ca4aca` (2026-09-19) | 3.0.5 | `2eb4ca2648bda91d1dfed81e9a37ba92e757aff9` | `gtwebui.1` | `com.gitter.gtwebui:gtwebui_rinku-fabric:3.0.5-gtwebui.1-1.21.1` |
+| `gtwebui/1.20.1` | `1.20.1` @ `ad67cce` (2026-09-19) | 3.0.5 | `2eb4ca2648bda91d1dfed81e9a37ba92e757aff9` | `gtwebui.1` | `com.gitter.gtwebui:gtwebui_rinku-fabric:3.0.5-gtwebui.1-1.20.1` |
+
+Every fork branch carries the same six fork commits (cherry-picked from `gtwebui/26.2.0`, 2026-09-30). Branch
+differences: 1.20.1, 1.21.1 and 1.21.11 already upload full frames with `glTexSubImage2D` into existing storage (the
+26.2 `glTexImage2D` change does not apply there); their helper-cleanup mixin uses the `_Rinku` member suffix; tests
+live in `fabric/src/test` instead of `common/src/test`. Build 1.20.1–1.21.11 with JDK 21 (1.20.1 compiles for Java 17).
 
 ## Changes against upstream 3.0.5
 
