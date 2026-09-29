@@ -442,6 +442,7 @@ public class RinkuBrowser extends CefBrowserOsr {
             }
             return;
         }
+        long glStart = System.nanoTime();
         paintCallbackLock.lock();
         try {
             onPaintRenderThread(false, drained.regions(), drained.buffer(), drained.width(), drained.height(),
@@ -451,6 +452,7 @@ public class RinkuBrowser extends CefBrowserOsr {
             throw failure;
         } finally {
             paintCallbackLock.unlock();
+            RinkuUploadClock.addGl(System.nanoTime() - glStart);
         }
         notifyUploaded(drained.frame(), drained.regions(), drained.full());
     }
