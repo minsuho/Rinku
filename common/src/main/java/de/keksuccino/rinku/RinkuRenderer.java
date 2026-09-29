@@ -110,7 +110,8 @@ public class RinkuRenderer {
     protected void onPaint(ByteBuffer buffer, int width, int height) {
         RenderSystem.assertOnRenderThread();
         // Create or recreate texture if size changed
-        if (texture == null || textureWidth != width || textureHeight != height) {
+        boolean fresh = texture == null || textureWidth != width || textureHeight != height;
+        if (fresh) {
             if (texture != null) {
                 texture.close();
             }
