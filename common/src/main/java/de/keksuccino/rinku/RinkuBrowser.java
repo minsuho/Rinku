@@ -213,6 +213,15 @@ public class RinkuBrowser extends CefBrowserOsr {
         return retainedView.alphaAt(x, y);
     }
 
+    /**
+     * GTWebUI fork: BGRA pixel (as a little-endian int: 0xAARRGGBB) of the frame most recently handed to the GPU
+     * upload, -1 before the first upload or outside the view. Render thread (between two drains the front buffer is
+     * not written). Used by slot-order checks (SP-04).
+     */
+    public int uploadedPixelAt(int x, int y) {
+        return retainedView.uploadedPixelAt(x, y);
+    }
+
     // Popups
     @Override
     public void onPopupShow(CefBrowser browser, boolean show) {
