@@ -11,11 +11,16 @@ import java.util.concurrent.locks.ReentrantLock;
  * GTWebUI fork: dirty-rect paint path for one browser view (ARCHITECTURE §3.17).
  *
  * <pre>
- *   CEF thread  accept(): lock → copy only the dirty rects into the retained full-size buffer (+ alpha copy)
- *                         → add them to the pending regions → unlock          (no per-paint allocation)
- *   render      drain():  lock → memcpy pending regions into the staging buffer → clear → unlock
- *                         → caller uploads from staging outside the lock       (no GL inside the lock)
+ *   CEF thread  accept(): lock → bring the back buffer up to date (rects it missed at the last swap, copied from
+ *                         the front) → copy the dirty rects into it (+ alpha copy) → add them to the pending
+ *                         regions → unlock                                        (no per-paint allocation)
+ *   render      drain():  tryLock → swap back and front (O(1), no copy) → clear pending → unlock
+ *                         → caller uploads from the front outside the lock        (no GL inside the lock)
  * </pre>
+ * The render thread never copies and never waits: when the CEF thread holds the lock (a paint in progress) the
+ * drain returns null and the regions go up next frame. Both buffers are full frames; the back one lags the front by
+ * the rects of the last swap ({@code backStale}), which the CEF thread copies before writing (2026-09-29: the old
+ * render-thread staging copy cost 1.8 ms per 1080p full upload).
  * A paint arriving before the render thread drained is merged into the pending regions instead of replacing the
  * previous frame, so a game below 60 FPS no longer turns every upload into a full upload.
  */
@@ -27,7 +32,11 @@ final class RetainedPaintSurface implements AutoCloseable {
     private final ReentrantLock lock = new ReentrantLock();
     private final DirtyRegionAccumulator pending;
     private final boolean keepAlpha;
+    /** back = CEF writes, front = uploaded. Swapped by {@link #drain}. */
     private ByteBuffer pixels, staging;
+    /** Rects the back buffer ({@code pixels}) misses after the last swap; null = the whole frame. */
+    private final java.util.List<Rectangle> backStale = new java.util.ArrayList<>();
+    private boolean backStaleAll;
     private int width, height;
     /**
      * Alpha copy, double-buffered: the CEF thread writes only {@code alphaBack}, then publishes it as {@code alphaFront}
@@ -74,6 +83,9 @@ final class RetainedPaintSurface implements AutoCloseable {
                 height = h;
                 MemoryUtil.memCopy(srcAddr, MemoryUtil.memAddress(pixels), bytes);
                 copiedBytes += bytes;
+                backStale.clear();
+                backStaleAll = false;
+                stagingInvalid = true;   // the other buffer has no frame yet
                 if (keepAlpha) {
                     byte[] a = new byte[w * h];
                     copyAlpha(srcAddr, w, a, new Rectangle(0, 0, w, h));
@@ -85,6 +97,15 @@ final class RetainedPaintSurface implements AutoCloseable {
                 return;
             }
             long dstAddr = MemoryUtil.memAddress(pixels);
+            // catch the back buffer up with the front: the rects of the last swap
+            long frontAddr = MemoryUtil.memAddress(staging);
+            if (backStaleAll) {
+                MemoryUtil.memCopy(frontAddr, dstAddr, bytes);
+            } else {
+                for (Rectangle st : backStale) copyRows(frontAddr, dstAddr, w, st);
+            }
+            backStale.clear();
+            backStaleAll = false;
             AlphaPlane front = keepAlpha ? alphaFront : null;
             byte[] back = front != null ? alphaBack : null;
             if (back != null) {
@@ -118,30 +139,43 @@ final class RetainedPaintSurface implements AutoCloseable {
      * @return null when there is nothing to upload
      */
     @Nullable Drained drain(boolean forceFull) {
-        lock.lock();
+        if (!lock.tryLock()) {
+            if (forceFull) pendingForceFull = true;   // a paint is being written: upload next frame
+            return null;
+        }
         try {
             if (closed || pixels == null) return null;
-            if (forceFull) pending.markFull();
+            if (forceFull || pendingForceFull) pending.markFull();
+            pendingForceFull = false;
             if (pending.isEmpty()) return null;
             boolean full = pending.isFull();
             Rectangle[] regions = pending.take();
-            long src = MemoryUtil.memAddress(pixels), dst = MemoryUtil.memAddress(staging);
+            // swap: the back buffer holds the current frame; the old front becomes the back and lags by these rects
+            ByteBuffer front = pixels;
+            pixels = staging;
+            staging = front;
+            backStale.clear();
+            if (full || stagingInvalid) backStaleAll = true;
+            stagingInvalid = false;
             if (full) {
-                MemoryUtil.memCopy(src, dst, (long) width * height * 4L);
+                backStaleAll = true;
                 uploadedBytes += (long) width * height * 4L;
                 fullUploads++;
             } else {
                 for (Rectangle r : regions) {
-                    copyRows(src, dst, width, r);
+                    backStale.add(r);
                     uploadedBytes += (long) r.width * r.height * 4L;
                 }
             }
             drains++;
-            return new Drained(staging, width, height, regions, full, latestFrame);
+            return new Drained(front, width, height, regions, full, latestFrame);
         } finally {
             lock.unlock();
         }
     }
+
+    private boolean pendingForceFull;
+    private boolean stagingInvalid;
 
     /** Alpha (0–255) at a view pixel from the latest paint, or -1 without an alpha copy / outside the view. */
     int alphaAt(int x, int y) {
