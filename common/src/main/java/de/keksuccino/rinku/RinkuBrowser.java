@@ -414,6 +414,15 @@ public class RinkuBrowser extends CefBrowserOsr {
 
     /** GTWebUI fork: upload the regions accumulated by {@link RetainedPaintSurface} since the last frame. */
     private void drainRetainedViewOnRenderThread() {
+        long uploadStart = System.nanoTime();
+        try {
+            drainRetainedView();
+        } finally {
+            RinkuUploadClock.add(System.nanoTime() - uploadStart);
+        }
+    }
+
+    private void drainRetainedView() {
         boolean resync = asyncPaintBufferLeases.consumeResync(PaintSurface.VIEW);
         // The staging buffer only holds the drained regions, so any path that uploads the whole frame needs a full drain
         boolean forceFull = resync || !renderer.supportsDirtyRectUpload();
