@@ -24,7 +24,9 @@ public final class RinkuBrowserTextureBlitter {
         boolean transparent = renderer.isTransparent();
         try {
             beginBrowserDraw(transparent, NativeBlendStateAccess.INSTANCE);
-            guiGraphics.blit(textureLocation, x, y, width, height, 0.0F, 0.0F, textureWidth, textureHeight, textureWidth, textureHeight);
+            // 1.21.4: GuiGraphics batches by RenderType; guiTextured blends by the texture's alpha
+            guiGraphics.blit(net.minecraft.client.renderer.RenderType::guiTextured, textureLocation, x, y, 0.0F, 0.0F, width, height,
+                    textureWidth, textureHeight, textureWidth, textureHeight);
         } finally {
             finishBrowserDraw(transparent, NativeBlendStateAccess.INSTANCE);
         }

@@ -4,9 +4,6 @@ import com.mojang.blaze3d.platform.GlStateManager;
 import com.mojang.blaze3d.platform.TextureUtil;
 import com.mojang.blaze3d.systems.RenderSystem;
 import net.minecraft.client.renderer.texture.AbstractTexture;
-import net.minecraft.server.packs.resources.ResourceManager;
-
-import java.io.IOException;
 
 import static org.lwjgl.opengl.GL12.GL_CLAMP_TO_EDGE;
 import static org.lwjgl.opengl.GL12.GL_TEXTURE_2D;
@@ -48,11 +45,6 @@ public class RinkuDirectTexture extends AbstractTexture {
     /** Compatibility name retained from the newer GPU-backed implementation. */
     public boolean isTextureViewReady() {
         return this.storageAllocated;
-    }
-
-    @Override
-    public void load(ResourceManager resourceManager) throws IOException {
-        // Browser pixels are supplied by CEF paint callbacks, never by the resource manager.
     }
 
     @Override
