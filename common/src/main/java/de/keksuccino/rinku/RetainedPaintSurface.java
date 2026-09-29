@@ -75,6 +75,7 @@ final class RetainedPaintSurface implements AutoCloseable {
             latestFrame = frame;
             long srcAddr = MemoryUtil.memAddress(src, 0);
             if (pixels == null || w != width || h != height) {
+                lastDrainedFront = null;   // about to be freed
                 if (pixels != null) MemoryUtil.memFree(pixels);
                 if (staging != null) MemoryUtil.memFree(staging);
                 pixels = MemoryUtil.memAlloc((int) bytes);
@@ -168,6 +169,9 @@ final class RetainedPaintSurface implements AutoCloseable {
                 }
             }
             drains++;
+            lastDrainedWidth = width;
+            lastDrainedHeight = height;
+            lastDrainedFront = front;
             return new Drained(front, width, height, regions, full, latestFrame);
         } finally {
             lock.unlock();
@@ -176,6 +180,22 @@ final class RetainedPaintSurface implements AutoCloseable {
 
     private boolean pendingForceFull;
     private boolean stagingInvalid;
+
+    /** Render thread: pixel of the last drained (uploaded) frame, 0xAARRGGBB; -1 before the first drain / outside. */
+    int uploadedPixelAt(int x, int y) {
+        if (!lock.tryLock()) return -2;   // a paint (or resize) is in progress: unknown this frame
+        try {
+            ByteBuffer front = lastDrainedFront;
+            int w = lastDrainedWidth, h = lastDrainedHeight;
+            if (front == null || x < 0 || y < 0 || x >= w || y >= h) return -1;
+            return front.getInt((y * w + x) * 4);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    private volatile ByteBuffer lastDrainedFront;
+    private volatile int lastDrainedWidth, lastDrainedHeight;
 
     /** Alpha (0–255) at a view pixel from the latest paint, or -1 without an alpha copy / outside the view. */
     int alphaAt(int x, int y) {
@@ -203,6 +223,7 @@ final class RetainedPaintSurface implements AutoCloseable {
             if (pixels != null) MemoryUtil.memFree(pixels);
             if (staging != null) MemoryUtil.memFree(staging);
             pixels = staging = null;
+            lastDrainedFront = null;
             alphaFront = null;
             alphaBack = null;
         } finally {
