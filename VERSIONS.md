@@ -9,12 +9,12 @@ One fork branch per upstream Minecraft branch: `gtwebui/<upstream branch>`.
 | `gtwebui/1.21.11` | `1.21.11` @ `81b89cd` (2026-09-19) | 3.0.5 | `2eb4ca2648bda91d1dfed81e9a37ba92e757aff9` | `gtwebui.1` | `com.gitter.gtwebui:gtwebui_rinku-fabric:3.0.5-gtwebui.1-1.21.11` |
 | `gtwebui/1.21.10` | `gtwebui/1.21.11` (upstream 1.21.10 is 2.x legacy only; backport, PRD SP-11) | 3.0.5 | `2eb4ca2648bda91d1dfed81e9a37ba92e757aff9` | `gtwebui.1` | `com.gitter.gtwebui:gtwebui_rinku-fabric:3.0.5-gtwebui.1-1.21.10` |
 | `gtwebui/1.21.1` | `1.21.1` @ `3ca4aca` (2026-09-19) | 3.0.5 | `2eb4ca2648bda91d1dfed81e9a37ba92e757aff9` | `gtwebui.1` | `com.gitter.gtwebui:gtwebui_rinku-fabric:3.0.5-gtwebui.1-1.21.1` |
-| `gtwebui/1.20.1` | `1.20.1` @ `ad67cce` (2026-09-19) | 3.0.5 | `2eb4ca2648bda91d1dfed81e9a37ba92e757aff9` | `gtwebui.1` | `com.gitter.gtwebui:gtwebui_rinku-fabric:3.0.5-gtwebui.1-1.20.1` |
+| `gtwebui/1.20.1` | `1.20.1` @ `ad67cce` (2026-09-19) | 3.0.5 | `2eb4ca2648bda91d1dfed81e9a37ba92e757aff9` | `gtwebui.1` | `com.gitter.gtwebui:gtwebui_rinku-fabric:3.0.5-gtwebui.1-1.20.1`, Forge `com.gitter.gtwebui:gtwebui_rinku-forge:3.0.5-gtwebui.1-1.20.1` |
 
 Every fork branch carries the same six fork commits (cherry-picked from `gtwebui/26.2.0`, 2026-09-30). Branch
 differences: 1.20.1, 1.21.1 and 1.21.11 already upload full frames with `glTexSubImage2D` into existing storage (the
 26.2 `glTexImage2D` change does not apply there); their helper-cleanup mixin uses the `_Rinku` member suffix; tests
-live in `fabric/src/test` instead of `common/src/test`. 1.21.10 backport (2026-09-30): Minecraft 1.21.10 / Fabric API 0.138.4; 1.21.11's `Identifier` and `net.minecraft.util.Util` are still `ResourceLocation` and `net.minecraft.Util`, and `Screen.resize` takes the `Minecraft` instance. Build 1.20.1–1.21.11 with JDK 21 (1.20.1 compiles for Java 17).
+live in `fabric/src/test` instead of `common/src/test`. 1.21.10 backport (2026-09-30): Minecraft 1.21.10 / Fabric API 0.138.4; 1.21.11's `Identifier` and `net.minecraft.util.Util` are still `ResourceLocation` and `net.minecraft.Util`, and `Screen.resize` takes the `Minecraft` instance. Build 1.20.1–1.21.11 with JDK 21 (1.20.1 compiles for Java 17). Forge 1.20.1 (2026-09-30): the Forge jar keeps the upstream mod id `rinku` (no `breaks` on Forge); its mods.toml version is `3.0.5-gtwebui.1` so GTWebUI can tell it from official Rinku. With both installed FML silently keeps the higher version.
 
 ## Changes against upstream 3.0.5
 
