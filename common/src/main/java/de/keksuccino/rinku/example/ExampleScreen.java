@@ -12,8 +12,8 @@ import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.network.chat.Component;
-import net.minecraft.resources.Identifier;
-import net.minecraft.util.Util;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.Util;
 import org.cef.browser.CefBrowser;
 import org.cef.browser.CefFrame;
 import org.cef.handler.CefDisplayHandler;
@@ -142,8 +142,8 @@ public class ExampleScreen extends Screen {
     }
 
     @Override
-    public void resize(int i, int j) {
-        super.resize(i, j);
+    public void resize(net.minecraft.client.Minecraft mc, int i, int j) {
+        super.resize(mc, i, j);
         resizeBrowser();
     }
 
@@ -227,8 +227,8 @@ public class ExampleScreen extends Screen {
 
     private void renderBrowserTexture(GuiGraphics guiGraphics) {
 
-        // Get the Identifier for the browser texture
-        Identifier textureLocation = browser.getTextureIdentifier();
+        // Get the ResourceLocation for the browser texture
+        ResourceLocation textureLocation = browser.getTextureIdentifier();
         if (textureLocation == null) {
             return;
         }

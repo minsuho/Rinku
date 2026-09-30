@@ -6,7 +6,7 @@ import de.keksuccino.rinku.listeners.RinkuUploadListener;
 import com.mojang.blaze3d.opengl.GlStateManager;
 import com.mojang.blaze3d.systems.RenderSystem;
 import net.minecraft.client.Minecraft;
-import net.minecraft.resources.Identifier;
+import net.minecraft.resources.ResourceLocation;
 import org.cef.browser.CefBrowser;
 import org.cef.browser.CefBrowserOsr;
 import org.cef.callback.CefDragData;
@@ -140,12 +140,12 @@ public class RinkuBrowser extends CefBrowserOsr {
     }
 
     /**
-     * Convenience method to get the Identifier for this browser's texture.
+     * Convenience method to get the ResourceLocation for this browser's texture.
      * This can be used directly with GuiGraphics rendering methods.
      *
-     * @return The Identifier for this browser's texture, or null if not initialized
+     * @return The ResourceLocation for this browser's texture, or null if not initialized
      */
-    public Identifier getTextureIdentifier() {
+    public ResourceLocation getTextureIdentifier() {
         return renderer != null && renderer.isTextureReady() ? renderer.getTextureIdentifier() : null;
     }
 
