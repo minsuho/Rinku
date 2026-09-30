@@ -3,7 +3,6 @@ package de.keksuccino.rinku;
 import com.mojang.logging.LogUtils;
 import de.keksuccino.rinku.listeners.RinkuCursorChangeListener;
 import de.keksuccino.rinku.listeners.RinkuUploadListener;
-import com.mojang.blaze3d.opengl.GlStateManager;
 import com.mojang.blaze3d.systems.RenderSystem;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.input.KeyEvent;
