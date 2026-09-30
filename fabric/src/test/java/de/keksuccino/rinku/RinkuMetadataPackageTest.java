@@ -35,7 +35,7 @@ class RinkuMetadataPackageTest {
 
         assertTrue(modMetadata.contains("de.keksuccino.rinku.RinkuFabric"));
         assertTrue(modMetadata.contains("\"version\": \"" + Rinku.VERSION + "\""));
-        assertTrue(modMetadata.contains("\"minecraft\": \">=1.21.11\""));
+        assertTrue(modMetadata.contains("\"minecraft\": \">=1.21.10\""));
         assertTrue(modMetadata.contains("\"java\": \">=21\""));
         assertTrue(mixinMetadata.contains("\"package\": \"de.keksuccino.rinku.mixins.fabric\""));
         assertFalse(modMetadata.contains("\"preLaunch\""));
