@@ -24,7 +24,7 @@ import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.network.chat.CommonComponents;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.Style;
-import net.minecraft.resources.Identifier;
+import net.minecraft.resources.ResourceLocation;
 import org.cef.CefSettings;
 
 import javax.annotation.Nullable;
@@ -50,7 +50,7 @@ public class OptionsScreen extends Screen {
     private static final int INVALID_TEXT_COLOR = 0xFFFF5555;
     private static final int BROWSER_TAB_INDEX = 0;
     private static final int DOWNLOADS_TAB_INDEX = 1;
-    private static final Identifier TAB_HEADER_BACKGROUND = Identifier.withDefaultNamespace("textures/gui/tab_header_background.png");
+    private static final ResourceLocation TAB_HEADER_BACKGROUND = ResourceLocation.withDefaultNamespace("textures/gui/tab_header_background.png");
 
     @Nullable
     private final Screen parent;

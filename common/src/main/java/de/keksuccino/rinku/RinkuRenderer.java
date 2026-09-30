@@ -7,7 +7,7 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.textures.GpuTexture;
 import com.mojang.blaze3d.textures.TextureFormat;
 import net.minecraft.client.Minecraft;
-import net.minecraft.resources.Identifier;
+import net.minecraft.resources.ResourceLocation;
 import java.nio.ByteBuffer;
 import java.util.UUID;
 import static org.lwjgl.opengl.GL12.*;
@@ -18,17 +18,17 @@ public class RinkuRenderer {
     private int textureWidth = 0;
     private int textureHeight = 0;
 
-    // Identifier for this renderer's texture
-    private final Identifier textureIdentifier;
+    // ResourceLocation for this renderer's texture
+    private final ResourceLocation textureIdentifier;
     private RinkuDirectTexture directTexture;
     private boolean textureRegistered = false;
     private ByteBuffer fallbackRgbaUploadBuffer;
 
     protected RinkuRenderer(boolean transparent) {
         this.transparent = transparent;
-        // Generate a unique Identifier for this renderer
+        // Generate a unique ResourceLocation for this renderer
         String uniqueId = UUID.randomUUID().toString().toLowerCase().replace("-", "");
-        this.textureIdentifier = Identifier.fromNamespaceAndPath("rinku", "browser_" + uniqueId);
+        this.textureIdentifier = ResourceLocation.fromNamespaceAndPath("rinku", "browser_" + uniqueId);
     }
 
     public void initialize() {
@@ -44,10 +44,10 @@ public class RinkuRenderer {
     }
 
     /**
-     * Gets the Identifier that can be used with GuiGraphics and other Minecraft rendering methods.
-     * This Identifier is registered with the TextureManager and points to the browser's texture.
+     * Gets the ResourceLocation that can be used with GuiGraphics and other Minecraft rendering methods.
+     * This ResourceLocation is registered with the TextureManager and points to the browser's texture.
      */
-    public Identifier getTextureIdentifier() {
+    public ResourceLocation getTextureIdentifier() {
         return textureIdentifier;
     }
 
