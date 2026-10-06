@@ -156,6 +156,11 @@ def nestedModJar = tasks.named("jarJar", Jar) {
 }
 def distributionVersion = "${mod_version}-${minecraft_version}"
 def nestedModArtifact = "${mod_id}-neoforge"
+// GTWebUI fork coordinates: com.gitter.gtwebui:gtwebui_rinku-neoforge:3.0.5-gtwebui.1-1.21.1
+// (api = the nested mod jar, runtime = the bootstrap wrapper players install; the mod id stays "rinku")
+def forkGroup = "com.gitter.gtwebui"
+def forkArtifact = "${fork_mod_id}-neoforge"
+def forkVersion = "${mod_version}-${fork_version}-${minecraft_version}"
 def nestedModFileName = "${project.group}.${nestedModArtifact}-${distributionVersion}-mod.jar"
 def nestedModPath = "META-INF/jarjar/${nestedModFileName}"
 def bootstrapMetadataFile = layout.buildDirectory.file("generated/rinkuBootstrap/META-INF/jarjar/metadata.json")
@@ -355,8 +360,9 @@ configurations.named("runtimeElements").configure {
 publishing {
     publications {
         mavenJava(MavenPublication) {
-            artifactId "${mod_id}-neoforge"
-            version "${mod_version}-${minecraft_version}"
+            groupId forkGroup
+            artifactId forkArtifact
+            version forkVersion
             from components.java
             pom.withXml {
                 def deps = asNode().get('dependencies')
@@ -415,16 +421,16 @@ def verifyPublicationMetadata = tasks.register("verifyPublicationMetadata") {
     def moduleFile = layout.buildDirectory.file("publications/mavenJava/module.json")
     def pomFile = layout.buildDirectory.file("publications/mavenJava/pom-default.xml")
     inputs.files(moduleFile, pomFile)
-    inputs.property("group", project.group.toString())
-    inputs.property("artifact", nestedModArtifact)
-    inputs.property("version", distributionVersion)
+    inputs.property("group", forkGroup)
+    inputs.property("artifact", forkArtifact)
+    inputs.property("version", forkVersion)
     doLast {
         def module = new groovy.json.JsonSlurper().parse(moduleFile.get().asFile)
-        if (module?.component?.group != project.group.toString() || module?.component?.module != nestedModArtifact || module?.component?.version != distributionVersion) throw new GradleException("Gradle module metadata contains incorrect Rinku NeoForge coordinates.")
+        if (module?.component?.group != forkGroup || module?.component?.module != forkArtifact || module?.component?.version != forkVersion) throw new GradleException("Gradle module metadata contains incorrect Rinku NeoForge coordinates.")
         def expectedVariantFiles = [
-                apiElements: "${nestedModArtifact}-${distributionVersion}-mod.jar",
-                runtimeElements: "${nestedModArtifact}-${distributionVersion}.jar",
-                sourcesElements: "${nestedModArtifact}-${distributionVersion}-sources.jar"
+                apiElements: "${forkArtifact}-${forkVersion}-mod.jar",
+                runtimeElements: "${forkArtifact}-${forkVersion}.jar",
+                sourcesElements: "${forkArtifact}-${forkVersion}-sources.jar"
         ]
         def variants = module?.variants instanceof List ? module.variants : []
         if (variants.collect { it.name }.toSet() != expectedVariantFiles.keySet()) throw new GradleException("Gradle module metadata contains unexpected variants: ${variants.collect { it.name }}.")
@@ -435,11 +441,16 @@ def verifyPublicationMetadata = tasks.register("verifyPublicationMetadata") {
         }
 
         def pom = new groovy.xml.XmlSlurper(false, false).parse(pomFile.get().asFile)
-        if (pom.groupId.text() != project.group.toString() || pom.artifactId.text() != nestedModArtifact || pom.version.text() != distributionVersion) throw new GradleException("The generated POM contains incorrect Rinku NeoForge coordinates.")
+        if (pom.groupId.text() != forkGroup || pom.artifactId.text() != forkArtifact || pom.version.text() != forkVersion) throw new GradleException("The generated POM contains incorrect Rinku NeoForge coordinates.")
         if (!pom.depthFirst().findAll { it.name() == "dependency" }.isEmpty()) throw new GradleException("The generated POM exposes mapped development dependencies.")
     }
 }
 
 tasks.named("build").configure {
     dependsOn(verifyPublicationMetadata)
+}
+
+// GTWebUI fork: publishing reads the module file stripModuleDependencies rewrites
+tasks.withType(AbstractPublishToMaven).configureEach {
+    dependsOn(stripModuleDepsTask)
 }
