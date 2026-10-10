@@ -45,7 +45,12 @@ live in `fabric/src/test` instead of `common/src/test`. 1.21.10 backport (2026-0
 7. **PBO upload experiment** (`gtwebui/26.2.0` only, off by default): `RinkuPboUpload.setEnabled(true)` sends view
    uploads of an existing texture through a ring of three pixel unpack buffers (map unsynchronized after the buffer's
    fence, copy the dirty rows, `glTexSubImage2D` from the buffer, fence). `describeAndReset()` reports the copy, GL
-   call and fence-wait times. GTWebUI switches it with `/gtwebui perf upload pbo|direct` (M15-13 step 2).
+   call and fence-wait times. GTWebUI switches it with `/gtwebui perf upload direct|pbo|mapped` (M15-13 step 2).
+   `mapped` (step B, `RinkuMappedUpload`, needs `ARB_buffer_storage`): the two `RetainedPaintSurface` frame buffers become
+   persistently mapped pixel unpack buffers (`replaceBuffers`), so the CEF thread's dirty-rect copy lands in them and
+   the render thread only calls `glTexSubImage2D` from the buffer and fences it; before each drain the last upload's
+   fence is polled without waiting (not signalled = drain next frame). The CEF thread never calls GL and never frees a
+   mapped buffer (resize and close drop them; the render thread deletes them).
 
 ## Building
 

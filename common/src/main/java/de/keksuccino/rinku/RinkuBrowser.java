@@ -50,6 +50,8 @@ public class RinkuBrowser extends CefBrowserOsr {
     private final PopupPaintState popupPaintState = new PopupPaintState();
     /** GTWebUI fork: dirty-rect view paint path (off-render-thread OnPaint). */
     private final RetainedPaintSurface retainedView;
+    /** GTWebUI fork experiment (PBO step B), render thread. */
+    private final RinkuMappedUpload mappedUpload = new RinkuMappedUpload();
     /** GTWebUI fork: number of the newest CEF view paint (1, 2, ...). */
     private final AtomicLong paintFrame = new AtomicLong();
     private final CopyOnWriteArrayList<RinkuUploadListener> uploadListeners = new CopyOnWriteArrayList<>();
@@ -432,6 +434,10 @@ public class RinkuBrowser extends CefBrowserOsr {
     }
 
     private void drainRetainedView() {
+        // PBO step B: the buffer the last mapped upload read goes back to the CEF thread at this drain
+        if (!mappedUpload.readyToDrain()) return;
+        mappedUpload.collect(retainedView);
+        mappedUpload.adoptIfWanted(retainedView);
         boolean resync = asyncPaintBufferLeases.consumeResync(PaintSurface.VIEW);
         // The staging buffer only holds the drained regions, so any path that uploads the whole frame needs a full drain
         boolean forceFull = resync || !renderer.supportsDirtyRectUpload();
@@ -446,8 +452,16 @@ public class RinkuBrowser extends CefBrowserOsr {
         long glStart = System.nanoTime();
         paintCallbackLock.lock();
         try {
-            onPaintRenderThread(false, drained.regions(), drained.buffer(), drained.width(), drained.height(),
-                    popupPaintState.geometry(), popupPaintState.visible(), popupPaintState.generation(), drained.full());
+            if (drained.glBuffer() != 0 && lastWidth == drained.width() && lastHeight == drained.height()
+                    && renderer.bindForMappedUpload(drained.width(), drained.height())) {
+                mappedUpload.upload(drained.glBuffer(), drained.width(), drained.height(),
+                        drained.full() ? null : clipAll(drained.regions(), drained.width(), drained.height()));
+                restorePopupAfterViewPaint(drained.width(), drained.height(), popupPaintState.geometry(), popupPaintState.visible(),
+                        popupPaintState.generation());
+            } else {
+                onPaintRenderThread(false, drained.regions(), drained.buffer(), drained.width(), drained.height(),
+                        popupPaintState.geometry(), popupPaintState.visible(), popupPaintState.generation(), drained.full());
+            }
         } catch (Throwable failure) {
             asyncPaintBufferLeases.requireResync(PaintSurface.VIEW);
             throw failure;
@@ -1082,6 +1096,7 @@ public class RinkuBrowser extends CefBrowserOsr {
         try {
             // Cleanup is safe before successful initialization and is required when initialization failed partway.
             renderer.cleanup();
+            mappedUpload.close();
         } catch (Throwable cleanupFailure) {
             failure = cleanupFailure;
         }
