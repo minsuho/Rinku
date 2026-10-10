@@ -165,6 +165,15 @@ public class RinkuRenderer {
         return true;
     }
 
+    /** GTWebUI fork experiment (PBO step B): bind the texture for an upload from a mapped buffer, if it has this size. */
+    boolean bindForMappedUpload(int width, int height) {
+        RenderSystem.assertOnRenderThread();
+        if (!(texture instanceof GlTexture glTexture) || textureWidth != width || textureHeight != height) return false;
+        syncDirectTextureViewIfNeeded();
+        GlStateManager._bindTexture(glTexture.glId());
+        return true;
+    }
+
     protected void onPaint(ByteBuffer buffer, int sourceRowLength, int sourceX, int sourceY, int destinationX, int destinationY, int width, int height) {
         RenderSystem.assertOnRenderThread();
         syncDirectTextureViewIfNeeded();
