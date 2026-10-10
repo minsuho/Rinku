@@ -22,6 +22,7 @@ public class RinkuRenderer {
     private RinkuDirectTexture directTexture;
     private boolean textureRegistered = false;
     private ByteBuffer fallbackRgbaUploadBuffer;
+    private RinkuPboUpload pbo;
 
     protected RinkuRenderer(boolean transparent) {
         this.transparent = transparent;
@@ -95,6 +96,10 @@ public class RinkuRenderer {
             texture = null;
         }
         fallbackRgbaUploadBuffer = null;
+        if (pbo != null) {
+            pbo.close();
+            pbo = null;
+        }
         
         // Unregister from TextureManager
         if (textureRegistered && textureIdentifier != null) {
@@ -149,6 +154,25 @@ public class RinkuRenderer {
         }
 
         uploadWithCommandEncoder(buffer, 0, 0, width, height);
+    }
+
+    /**
+     * GTWebUI fork experiment (M15-13 step 2): upload through the pixel buffer ring when it is switched on and the
+     * texture already has this size.
+     *
+     * @param regions clipped rects, null = the whole frame
+     * @return false when the caller has to upload the usual way
+     */
+    boolean uploadThroughPbo(ByteBuffer buffer, int width, int height, java.awt.Rectangle[] regions) {
+        RenderSystem.assertOnRenderThread();
+        if (!RinkuPboUpload.isEnabled() || !(texture instanceof GlTexture glTexture) || textureWidth != width || textureHeight != height) {
+            return false;
+        }
+        syncDirectTextureViewIfNeeded();
+        if (pbo == null) pbo = new RinkuPboUpload();
+        GlStateManager._bindTexture(glTexture.glId());
+        pbo.upload(buffer, width, height, regions);
+        return true;
     }
 
     protected void onPaint(ByteBuffer buffer, int x, int y, int width, int height) {

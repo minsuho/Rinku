@@ -475,6 +475,11 @@ public class RinkuBrowser extends CefBrowserOsr {
 
     private void onPaintRenderThread(boolean popup, Rectangle[] dirtyRects, ByteBuffer buffer, int width, int height, Rectangle popupRect, boolean showPopupSnapshot, long popupStateGeneration, boolean forceFullUpload) {
         if (!popup) {
+            if (lastWidth == width && lastHeight == height && renderer.supportsDirtyRectUpload()
+                    && renderer.uploadThroughPbo(buffer, width, height, forceFullUpload ? null : clipAll(dirtyRects, width, height))) {
+                restorePopupAfterViewPaint(width, height, popupRect, showPopupSnapshot, popupStateGeneration);
+                return;
+            }
             if (forceFullUpload || lastWidth != width || lastHeight != height || !renderer.supportsDirtyRectUpload()) {
                 lastWidth = width;
                 lastHeight = height;
@@ -600,6 +605,15 @@ public class RinkuBrowser extends CefBrowserOsr {
             int dstOffset = ((rect.y() + row) * dstWidth + rect.x()) << 2;
             MemoryUtil.memCopy(srcAddr + srcOffset, dstAddr + dstOffset, bytesPerRow);
         }
+    }
+
+    private static Rectangle[] clipAll(Rectangle[] rects, int maxWidth, int maxHeight) {
+        java.util.List<Rectangle> out = new java.util.ArrayList<>(rects.length);
+        for (Rectangle r : rects) {
+            Rectangle c = clipRect(r, maxWidth, maxHeight);
+            if (c != null) out.add(c);
+        }
+        return out.toArray(new Rectangle[0]);
     }
 
     private static Rectangle clipRect(Rectangle rect, int maxWidth, int maxHeight) {
