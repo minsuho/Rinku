@@ -33,6 +33,10 @@ One fork branch per upstream Minecraft branch: `gtwebui/<upstream branch>`.
    `getPaintStats()` returns cumulative counters (`RinkuPaintStats`); `alphaAt(x, y)` reads the alpha copy kept for
    transparent browsers (click-through hit tests).
 6. Build: `publishToMavenLocal` depends on `stripModuleDependencies` (Gradle implicit-dependency validation).
+7. **PBO upload experiment** (`gtwebui/26.2.0` only, off by default): `RinkuPboUpload.setEnabled(true)` sends view
+   uploads of an existing texture through a ring of three pixel unpack buffers (map unsynchronized after the buffer's
+   fence, copy the dirty rows, `glTexSubImage2D` from the buffer, fence). `describeAndReset()` reports the copy, GL
+   call and fence-wait times. GTWebUI switches it with `/gtwebui perf upload pbo|direct` (M15-13 step 2).
 
 ## Building
 
