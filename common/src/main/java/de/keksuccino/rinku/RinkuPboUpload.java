@@ -28,10 +28,12 @@ import static org.lwjgl.opengl.GL32.*;
 public final class RinkuPboUpload {
 
     static final int RING = 3;
-    private static volatile boolean enabled;
+    /** direct = upload from memory (default), pbo = this ring, mapped = {@link RinkuMappedUpload} (step B) */
+    private static volatile String mode = "direct";
     private static volatile Boolean supported;
     // render thread
     private static long copyNanos, callNanos, waitNanos, uploads, bytes, waits;
+    private static long mappedNanos, mappedUploads, mappedSkips, mappedAdopts;
 
     private final int[] buffers = new int[RING];
     private final long[] fences = new long[RING];
@@ -39,14 +41,52 @@ public final class RinkuPboUpload {
     private int next;
 
     public static boolean isEnabled() {
-        return enabled;
+        return mode.equals("pbo");
+    }
+
+    static boolean isMapped() {
+        return mode.equals("mapped");
+    }
+
+    public static String mode() {
+        return mode;
+    }
+
+    /** @return false when this GL lacks what the mode needs (pbo: GL 3.2, mapped: ARB_buffer_storage) */
+    public static boolean setMode(String m) {
+        switch (m) {
+            case "direct" -> mode = m;
+            case "pbo" -> {
+                if (!isSupported()) return false;
+                mode = m;
+            }
+            case "mapped" -> {
+                if (!RinkuMappedUpload.isSupported()) return false;
+                mode = m;
+            }
+            default -> {
+                return false;
+            }
+        }
+        return true;
     }
 
     /** @return false when this GL has no mappable buffers (GL 3.0 map range) */
     public static boolean setEnabled(boolean on) {
-        if (on && !isSupported()) return false;
-        enabled = on;
-        return true;
+        return setMode(on ? "pbo" : "direct");
+    }
+
+    static void mappedUpload(long nanos) {
+        mappedNanos += nanos;
+        mappedUploads++;
+    }
+
+    static void mappedSkip() {
+        mappedSkips++;
+    }
+
+    static void mappedAdopt() {
+        mappedAdopts++;
     }
 
     static boolean isSupported() {
@@ -67,7 +107,11 @@ public final class RinkuPboUpload {
         String s = uploads == 0 ? "no PBO uploads" : String.format(Locale.ROOT,
                 "PBO uploads %d (%.1f MB): copy avg %.3f ms, GL calls avg %.3f ms, fence wait avg %.3f ms (%d waited)",
                 uploads, bytes / 1e6, copyNanos / 1e6 / uploads, callNanos / 1e6 / uploads, waitNanos / 1e6 / uploads, waits);
+        if (mappedUploads > 0 || mappedSkips > 0 || mappedAdopts > 0) s += String.format(Locale.ROOT,
+                "; mapped uploads %d: GL calls avg %.3f ms, drains skipped for the fence %d, buffers adopted %d",
+                mappedUploads, mappedUploads == 0 ? 0 : mappedNanos / 1e6 / mappedUploads, mappedSkips, mappedAdopts);
         copyNanos = callNanos = waitNanos = uploads = bytes = waits = 0;
+        mappedNanos = mappedUploads = mappedSkips = mappedAdopts = 0;
         return s;
     }
 

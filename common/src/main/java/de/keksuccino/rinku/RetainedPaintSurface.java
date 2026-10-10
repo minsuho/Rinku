@@ -26,14 +26,23 @@ import java.util.concurrent.locks.ReentrantLock;
  */
 final class RetainedPaintSurface implements AutoCloseable {
 
-    /** One drained upload: pixels live in the staging buffer until the next drain. */
-    record Drained(ByteBuffer buffer, int width, int height, Rectangle[] regions, boolean full, long frame) {}
+    /**
+     * One drained upload: pixels live in the staging buffer until the next drain.
+     *
+     * @param glBuffer the pixel unpack buffer {@code buffer} is mapped from, 0 = ordinary memory
+     */
+    record Drained(ByteBuffer buffer, int width, int height, Rectangle[] regions, boolean full, long frame, int glBuffer) {}
 
     private final ReentrantLock lock = new ReentrantLock();
     private final DirtyRegionAccumulator pending;
     private final boolean keepAlpha;
     /** back = CEF writes, front = uploaded. Swapped by {@link #drain}. */
     private ByteBuffer pixels, staging;
+    /**
+     * GL buffers {@code pixels} / {@code staging} are mapped from (PBO step B, {@link #replaceBuffers}), 0 = memAlloc.
+     * The render thread owns mapped buffers: this class never frees them, it only drops them (resize, close).
+     */
+    private int pixelsGl, stagingGl;
     /** Rects the back buffer ({@code pixels}) misses after the last swap; null = the whole frame. */
     private final java.util.List<Rectangle> backStale = new java.util.ArrayList<>();
     private boolean backStaleAll;
@@ -76,8 +85,9 @@ final class RetainedPaintSurface implements AutoCloseable {
             long srcAddr = MemoryUtil.memAddress(src, 0);
             if (pixels == null || w != width || h != height) {
                 lastDrainedFront = null;   // about to be freed
-                if (pixels != null) MemoryUtil.memFree(pixels);
-                if (staging != null) MemoryUtil.memFree(staging);
+                if (pixels != null && pixelsGl == 0) MemoryUtil.memFree(pixels);
+                if (staging != null && stagingGl == 0) MemoryUtil.memFree(staging);
+                pixelsGl = stagingGl = 0;   // mapped buffers are dropped; the render thread deletes them
                 pixels = MemoryUtil.memAlloc((int) bytes);
                 staging = MemoryUtil.memAlloc((int) bytes);
                 width = w;
@@ -87,6 +97,7 @@ final class RetainedPaintSurface implements AutoCloseable {
                 backStale.clear();
                 backStaleAll = false;
                 stagingInvalid = true;   // the other buffer has no frame yet
+                publish();
                 if (keepAlpha) {
                     byte[] a = new byte[w * h];
                     copyAlpha(srcAddr, w, a, new Rectangle(0, 0, w, h));
@@ -153,8 +164,11 @@ final class RetainedPaintSurface implements AutoCloseable {
             Rectangle[] regions = pending.take();
             // swap: the back buffer holds the current frame; the old front becomes the back and lags by these rects
             ByteBuffer front = pixels;
+            int frontGl = pixelsGl;
             pixels = staging;
+            pixelsGl = stagingGl;
             staging = front;
+            stagingGl = frontGl;
             backStale.clear();
             if (full || stagingInvalid) backStaleAll = true;
             stagingInvalid = false;
@@ -172,7 +186,7 @@ final class RetainedPaintSurface implements AutoCloseable {
             lastDrainedWidth = width;
             lastDrainedHeight = height;
             lastDrainedFront = front;
-            return new Drained(front, width, height, regions, full, latestFrame);
+            return new Drained(front, width, height, regions, full, latestFrame, frontGl);
         } finally {
             lock.unlock();
         }
@@ -180,6 +194,57 @@ final class RetainedPaintSurface implements AutoCloseable {
 
     private boolean pendingForceFull;
     private boolean stagingInvalid;
+
+    /**
+     * Render thread (PBO step B): put both frame buffers into {@code back} / {@code front} (mapped GL buffers, or
+     * memAlloc'd ones with names 0 to go back), copying their contents. Old memAlloc buffers are freed here; old GL
+     * buffers are only dropped (see {@link #glBuffers}).
+     *
+     * @return false when a paint holds the lock, nothing is retained yet, or the size does not match — try next frame
+     */
+    boolean replaceBuffers(ByteBuffer back, int backGl, ByteBuffer front, int frontGl) {
+        if (!lock.tryLock()) return false;
+        try {
+            long bytes = (long) width * height * 4L;
+            if (closed || pixels == null || back.capacity() < bytes || front.capacity() < bytes) return false;
+            MemoryUtil.memCopy(MemoryUtil.memAddress(pixels), MemoryUtil.memAddress(back), bytes);
+            MemoryUtil.memCopy(MemoryUtil.memAddress(staging), MemoryUtil.memAddress(front), bytes);
+            if (pixelsGl == 0) MemoryUtil.memFree(pixels);
+            if (stagingGl == 0) MemoryUtil.memFree(staging);
+            if (lastDrainedFront == staging) lastDrainedFront = front;
+            pixels = back;
+            pixelsGl = backGl;
+            staging = front;
+            stagingGl = frontGl;
+            publish();
+            return true;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /**
+     * GL buffers in use (0 = none); a mapped buffer not listed here any more may be deleted. Never blocks (the render
+     * thread calls it every frame): a published snapshot, updated under the lock. The pair only changes as a set
+     * (swaps keep both names), so a stale read never lists a buffer that was already dropped and adopted again.
+     */
+    int[] glBuffers() {
+        return new int[] {publishedGlA, publishedGlB};
+    }
+
+    /** Frame size of the retained buffers, 0 before the first paint. Never blocks. */
+    int retainedBytes() {
+        return publishedBytes;
+    }
+
+    private volatile int publishedGlA, publishedGlB, publishedBytes;
+
+    /** Under the lock, after the buffers or the size changed. */
+    private void publish() {
+        publishedGlA = pixelsGl;
+        publishedGlB = stagingGl;
+        publishedBytes = pixels == null ? 0 : width * height * 4;
+    }
 
     /** Render thread: pixel of the last drained (uploaded) frame, 0xAARRGGBB; -1 before the first drain / outside. */
     int uploadedPixelAt(int x, int y) {
@@ -220,9 +285,11 @@ final class RetainedPaintSurface implements AutoCloseable {
         try {
             if (closed) return;
             closed = true;
-            if (pixels != null) MemoryUtil.memFree(pixels);
-            if (staging != null) MemoryUtil.memFree(staging);
+            if (pixels != null && pixelsGl == 0) MemoryUtil.memFree(pixels);
+            if (staging != null && stagingGl == 0) MemoryUtil.memFree(staging);
             pixels = staging = null;
+            pixelsGl = stagingGl = 0;
+            publish();
             lastDrainedFront = null;
             alphaFront = null;
             alphaBack = null;
