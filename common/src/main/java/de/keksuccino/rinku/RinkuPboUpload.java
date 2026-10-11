@@ -1,6 +1,7 @@
 package de.keksuccino.rinku;
 
 import com.mojang.blaze3d.opengl.GlStateManager;
+import com.mojang.logging.LogUtils;
 import org.lwjgl.opengl.GL;
 import org.lwjgl.system.MemoryUtil;
 
@@ -22,14 +23,20 @@ import static org.lwjgl.opengl.GL32.*;
  *   copy the dirty rows (same layout as the frame) → unmap → glTexSubImage2D per rect from the buffer → fence
  * </pre>
  * The texture upload then reads the buffer asynchronously instead of the driver copying client memory inside the call.
- * Off by default; {@link #setEnabled} switches at run time so the two paths can be compared in one session. The copy,
+ * The default is auto (2026-10-11): mapped where the GL has it. {@link #setMode} switches at run time so the paths can be
+ * compared in one session; {@code -Drinku.upload=direct} goes back to the old path. The copy,
  * the GL calls and the fence wait are timed separately ({@link #describe}).
  */
 public final class RinkuPboUpload {
 
     static final int RING = 3;
-    /** direct = upload from memory (default), pbo = this ring, mapped = {@link RinkuMappedUpload} (step B) */
-    private static volatile String mode = "direct";
+    /**
+     * direct = upload from memory, pbo = this ring, mapped = {@link RinkuMappedUpload} (step B), auto = the best
+     * this GL has (mapped, else pbo, else direct; the default), decided on the render thread at the first upload. The start value comes
+     * from {@code -Drinku.upload=direct|pbo|mapped|auto}; a mode this GL lacks falls back the same way as auto.
+     */
+    private static volatile String mode = startMode();
+    private static volatile boolean logged;
     private static volatile Boolean supported;
     // render thread
     private static long copyNanos, callNanos, waitNanos, uploads, bytes, waits;
@@ -40,12 +47,39 @@ public final class RinkuPboUpload {
     private int size;
     private int next;
 
+    /** Render thread. */
     public static boolean isEnabled() {
-        return mode.equals("pbo");
+        return resolve().equals("pbo");
     }
 
+    /** Render thread. */
     static boolean isMapped() {
-        return mode.equals("mapped");
+        return resolve().equals("mapped");
+    }
+
+    private static String startMode() {
+        String m = System.getProperty("rinku.upload", "auto").trim().toLowerCase(Locale.ROOT);
+        return switch (m) {
+            case "direct", "pbo", "mapped", "auto" -> m;
+            default -> "auto";
+        };
+    }
+
+    /** Render thread (GL capabilities): settle auto, and a start mode this GL cannot do, once. */
+    private static String resolve() {
+        String m = mode;
+        if (m.equals("direct") || m.equals("pbo") && isSupported() || m.equals("mapped") && RinkuMappedUpload.isSupported()) {
+            if (!logged) {
+                logged = true;
+                LogUtils.getLogger().info("Rinku view upload path: {}", m);
+            }
+            return m;
+        }
+        String best = RinkuMappedUpload.isSupported() ? "mapped" : isSupported() ? "pbo" : "direct";
+        LogUtils.getLogger().info("Rinku view upload path: {} (asked for {})", best, m);
+        logged = true;
+        mode = best;
+        return best;
     }
 
     public static String mode() {
@@ -55,7 +89,7 @@ public final class RinkuPboUpload {
     /** @return false when this GL lacks what the mode needs (pbo: GL 3.2, mapped: ARB_buffer_storage) */
     public static boolean setMode(String m) {
         switch (m) {
-            case "direct" -> mode = m;
+            case "direct", "auto" -> mode = m;
             case "pbo" -> {
                 if (!isSupported()) return false;
                 mode = m;

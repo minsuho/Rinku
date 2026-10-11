@@ -98,4 +98,31 @@ class RetainedPaintSurfaceTest {
         assertNull(s.drain(false), "nothing new");
         s.close();
     }
+
+    /** A resize or close on the CEF thread while the render thread uploads the drained front must not free it. */
+    @Test
+    void resizeAndCloseRetireTheDrainedFrontUntilTheRenderThreadFreesIt() {
+        RetainedPaintSurface s = new RetainedPaintSurface(false);
+        int[] model = new int[W * H];
+        paint(model, new Rectangle(0, 0, W, H), 0x33333333);
+        ByteBuffer f = frame(model);
+        s.accept(new Rectangle[]{new Rectangle(0, 0, W, H)}, f, W, H, 1);
+        MemoryUtil.memFree(f);
+        RetainedPaintSurface.Drained d = s.drain(false);
+        // CEF thread: a frame at a new size arrives while the render thread still reads d.buffer()
+        ByteBuffer big = MemoryUtil.memAlloc((W + 8) * H * 4);
+        s.accept(new Rectangle[]{new Rectangle(0, 0, W + 8, H)}, big, W + 8, H, 2);
+        MemoryUtil.memFree(big);
+        assertEquals(1, s.retiredCount(), "drained front retired, not freed");
+        assertFront(model, d);   // still the frame it was
+        s.drain(false);          // next render-thread drain frees it
+        assertEquals(0, s.retiredCount());
+        RetainedPaintSurface.Drained d2 = s.drain(true);
+        assertNotNull(d2);
+        s.close();               // CEF thread close: the front again only retired
+        assertEquals(1, s.retiredCount());
+        s.releaseRetired();      // render-thread cleanup
+        assertEquals(0, s.retiredCount());
+        assertNull(s.drain(true));
+    }
 }
