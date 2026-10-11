@@ -86,7 +86,7 @@ final class RetainedPaintSurface implements AutoCloseable {
             if (pixels == null || w != width || h != height) {
                 lastDrainedFront = null;   // about to be freed
                 if (pixels != null && pixelsGl == 0) MemoryUtil.memFree(pixels);
-                if (staging != null && stagingGl == 0) MemoryUtil.memFree(staging);
+                retireFront();
                 pixelsGl = stagingGl = 0;   // mapped buffers are dropped; the render thread deletes them
                 pixels = MemoryUtil.memAlloc((int) bytes);
                 staging = MemoryUtil.memAlloc((int) bytes);
@@ -156,6 +156,7 @@ final class RetainedPaintSurface implements AutoCloseable {
             return null;
         }
         try {
+            freeRetired();
             if (closed || pixels == null) return null;
             if (forceFull || pendingForceFull) pending.markFull();
             pendingForceFull = false;
@@ -246,6 +247,44 @@ final class RetainedPaintSurface implements AutoCloseable {
         publishedBytes = pixels == null ? 0 : width * height * 4;
     }
 
+    /**
+     * The front buffer is the one the last {@link #drain} handed out; the render thread uploads from it outside the
+     * lock (direct and PBO paths). A resize or close on the CEF thread must not free it under that upload
+     * (use-after-free): it is retired here and freed by the render thread at its next drain or {@link #releaseRetired}.
+     * Mapped buffers are only dropped, as before. Under the lock.
+     */
+    private void retireFront() {
+        if (staging != null && stagingGl == 0) retired.add(staging);
+    }
+
+    /** Under the lock, render thread only. */
+    private void freeRetired() {
+        for (ByteBuffer b : retired) MemoryUtil.memFree(b);
+        retired.clear();
+    }
+
+    /** Render thread, browser cleanup: free buffers retired by a resize or close that no drain followed. */
+    void releaseRetired() {
+        lock.lock();
+        try {
+            freeRetired();
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    private final java.util.List<ByteBuffer> retired = new java.util.ArrayList<>();
+
+    /** Tests. */
+    int retiredCount() {
+        lock.lock();
+        try {
+            return retired.size();
+        } finally {
+            lock.unlock();
+        }
+    }
+
     /** Render thread: pixel of the last drained (uploaded) frame, 0xAARRGGBB; -1 before the first drain / outside. */
     int uploadedPixelAt(int x, int y) {
         if (!lock.tryLock()) return -2;   // a paint (or resize) is in progress: unknown this frame
@@ -286,7 +325,7 @@ final class RetainedPaintSurface implements AutoCloseable {
             if (closed) return;
             closed = true;
             if (pixels != null && pixelsGl == 0) MemoryUtil.memFree(pixels);
-            if (staging != null && stagingGl == 0) MemoryUtil.memFree(staging);
+            retireFront();
             pixels = staging = null;
             pixelsGl = stagingGl = 0;
             publish();
