@@ -1121,6 +1121,7 @@ public class RinkuBrowser extends CefBrowserOsr {
             // Cleanup is safe before successful initialization and is required when initialization failed partway.
             renderer.cleanup();
             mappedUpload.close();
+            retainedView.releaseRetired();
         } catch (Throwable cleanupFailure) {
             failure = cleanupFailure;
         }
