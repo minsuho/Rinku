@@ -212,6 +212,7 @@ public final class RinkuPboUpload {
             GlStateManager._pixelStore(GL_UNPACK_SKIP_ROWS, 0);
         }
         fences[i] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+        GlStateManager._pixelStore(GL_UNPACK_ROW_LENGTH, 0);
         glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
         long t3 = System.nanoTime();
 
