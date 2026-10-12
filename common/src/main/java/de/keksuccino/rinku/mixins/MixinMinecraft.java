@@ -65,7 +65,9 @@ public abstract class MixinMinecraft {
         RinkuRenderCoordinator.pumpOnRenderThread();
         Minecraft minecraft = (Minecraft) (Object) this;
         boolean requiresDeferral = Services.PLATFORM.requiresClientInitializationDeferral();
-        boolean stableCandidate = Services.PLATFORM.isClientInitializationCandidateReady() && minecraft.isGameLoadFinished() && minecraft.getOverlay() == null && minecraft.screen != null;
+        // GTWebUI fork: no screen needed — a launcher that joins a server directly (--quickPlayMultiplayer) is in the
+        // world with no screen once loading settles, and Rinku waited for the next screen (minutes, until death)
+        boolean stableCandidate = Services.PLATFORM.isClientInitializationCandidateReady() && minecraft.isGameLoadFinished() && minecraft.getOverlay() == null;
         boolean retryInitialization = CLIENT_INITIALIZATION_READINESS_RINKU.observeTick(requiresDeferral, stableCandidate);
         if (retryInitialization && Rinku.isInitializationAllowed()) handleScreenChangeWithRecursion_Rinku(minecraft.screen);
     }
