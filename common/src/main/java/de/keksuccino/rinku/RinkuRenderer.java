@@ -27,6 +27,7 @@ public class RinkuRenderer {
     private int textureHeight;
     private boolean textureRegistered;
     private boolean textureUploaded;
+    private RinkuPboUpload pbo;
 
     protected RinkuRenderer(boolean transparent) {
         this.transparent = transparent;
@@ -86,6 +87,36 @@ public class RinkuRenderer {
             this.textureRegistered = false;
         }
         this.texture = null;
+        if (this.pbo != null) {
+            this.pbo.close();
+            this.pbo = null;
+        }
+    }
+
+    /**
+     * GTWebUI fork (M15-13 step 2): upload through the pixel buffer ring when it is switched on and the texture
+     * already has this size.
+     *
+     * @param regions clipped rects, null = the whole frame
+     * @return false when the caller has to upload the usual way
+     */
+    boolean uploadThroughPbo(ByteBuffer buffer, int width, int height, java.awt.Rectangle[] regions) {
+        RenderSystem.assertOnRenderThread();
+        if (!RinkuPboUpload.isEnabled() || !this.isTextureReady() || this.textureWidth != width || this.textureHeight != height) {
+            return false;
+        }
+        if (this.pbo == null) this.pbo = new RinkuPboUpload();
+        GlStateManager._bindTexture(this.texture.getId());
+        this.pbo.upload(buffer, width, height, regions);
+        return true;
+    }
+
+    /** GTWebUI fork (PBO step B): bind the texture for an upload from a mapped buffer, if it has this size. */
+    boolean bindForMappedUpload(int width, int height) {
+        RenderSystem.assertOnRenderThread();
+        if (!this.isTextureReady() || this.textureWidth != width || this.textureHeight != height) return false;
+        GlStateManager._bindTexture(this.texture.getId());
+        return true;
     }
 
     protected void onPaint(ByteBuffer buffer, int width, int height) {
