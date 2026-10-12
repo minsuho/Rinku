@@ -31,6 +31,44 @@ class RetainedPaintSurfaceTest {
         for (int i = 0; i < W * H; i++) assertEquals(model[i], d.buffer().getInt(i * 4), "pixel " + i);
     }
 
+    /** PBO step B: the frame buffers move into (mapped) buffers of the render thread and keep matching the frames. */
+    @Test
+    void replacedBuffersKeepTheFramesAndAreDroppedNotFreed() {
+        RetainedPaintSurface s = new RetainedPaintSurface(false);
+        int[] model = new int[W * H];
+        Random rnd = new Random(3);
+        paint(model, new Rectangle(0, 0, W, H), 0x22222222);
+        ByteBuffer f = frame(model);
+        s.accept(new Rectangle[]{new Rectangle(0, 0, W, H)}, f, W, H, 1);
+        MemoryUtil.memFree(f);
+        assertFront(model, s.drain(false));
+        ByteBuffer a = MemoryUtil.memAlloc(W * H * 4), b = MemoryUtil.memAlloc(W * H * 4);
+        org.junit.jupiter.api.Assertions.assertTrue(s.replaceBuffers(a, 7, b, 8));
+        org.junit.jupiter.api.Assertions.assertArrayEquals(new int[]{7, 8}, s.glBuffers());
+        for (int step = 0; step < 50; step++) {
+            int x = rnd.nextInt(W - 1), y = rnd.nextInt(H - 1);
+            Rectangle r = new Rectangle(x, y, 1 + rnd.nextInt(W - x), 1 + rnd.nextInt(H - y));
+            paint(model, r, rnd.nextInt());
+            ByteBuffer fb = frame(model);
+            s.accept(new Rectangle[]{r}, fb, W, H, step + 2);
+            MemoryUtil.memFree(fb);
+            RetainedPaintSurface.Drained d = s.drain(false);
+            assertFront(model, d);
+            org.junit.jupiter.api.Assertions.assertTrue(d.glBuffer() == 7 || d.glBuffer() == 8, "uploads from a mapped buffer");
+            org.junit.jupiter.api.Assertions.assertTrue(d.buffer() == a || d.buffer() == b);
+        }
+        // a resize drops the mapped buffers (the render thread deletes them); they must still be valid memory here
+        ByteBuffer big = MemoryUtil.memAlloc(W * 2 * H * 4);
+        s.accept(new Rectangle[]{new Rectangle(0, 0, W * 2, H)}, big, W * 2, H, 99);
+        MemoryUtil.memFree(big);
+        org.junit.jupiter.api.Assertions.assertArrayEquals(new int[]{0, 0}, s.glBuffers());
+        a.putInt(0, 1);
+        b.putInt(0, 1);
+        MemoryUtil.memFree(a);
+        MemoryUtil.memFree(b);
+        s.close();
+    }
+
     @Test
     void frontAlwaysMatchesTheLatestFrame() {
         RetainedPaintSurface s = new RetainedPaintSurface(false);
@@ -59,5 +97,32 @@ class RetainedPaintSurfaceTest {
         }
         assertNull(s.drain(false), "nothing new");
         s.close();
+    }
+
+    /** A resize or close on the CEF thread while the render thread uploads the drained front must not free it. */
+    @Test
+    void resizeAndCloseRetireTheDrainedFrontUntilTheRenderThreadFreesIt() {
+        RetainedPaintSurface s = new RetainedPaintSurface(false);
+        int[] model = new int[W * H];
+        paint(model, new Rectangle(0, 0, W, H), 0x33333333);
+        ByteBuffer f = frame(model);
+        s.accept(new Rectangle[]{new Rectangle(0, 0, W, H)}, f, W, H, 1);
+        MemoryUtil.memFree(f);
+        RetainedPaintSurface.Drained d = s.drain(false);
+        // CEF thread: a frame at a new size arrives while the render thread still reads d.buffer()
+        ByteBuffer big = MemoryUtil.memAlloc((W + 8) * H * 4);
+        s.accept(new Rectangle[]{new Rectangle(0, 0, W + 8, H)}, big, W + 8, H, 2);
+        MemoryUtil.memFree(big);
+        assertEquals(1, s.retiredCount(), "drained front retired, not freed");
+        assertFront(model, d);   // still the frame it was
+        s.drain(false);          // next render-thread drain frees it
+        assertEquals(0, s.retiredCount());
+        RetainedPaintSurface.Drained d2 = s.drain(true);
+        assertNotNull(d2);
+        s.close();               // CEF thread close: the front again only retired
+        assertEquals(1, s.retiredCount());
+        s.releaseRetired();      // render-thread cleanup
+        assertEquals(0, s.retiredCount());
+        assertNull(s.drain(true));
     }
 }
