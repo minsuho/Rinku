@@ -112,6 +112,7 @@ final class RinkuMappedUpload {
         }
         if (fence != 0) glDeleteSync(fence);
         fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+        GlStateManager._pixelStore(GL_UNPACK_ROW_LENGTH, 0);
         glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
         RinkuPboUpload.mappedUpload(System.nanoTime() - t0);
     }
