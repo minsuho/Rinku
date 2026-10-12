@@ -33,6 +33,16 @@ One fork branch per upstream Minecraft branch: `gtwebui/<upstream branch>`.
    `getPaintStats()` returns cumulative counters (`RinkuPaintStats`); `alphaAt(x, y)` reads the alpha copy kept for
    transparent browsers (click-through hit tests).
 6. Build: `publishToMavenLocal` depends on `stripModuleDependencies` (Gradle implicit-dependency validation).
+7. **Upload paths** (M15-13, from `gtwebui/26.2.0`, ported 2026-10-12: RenderPearl GlStateManager; the OpenGL backend only (GlTexture), BGRA straight to the texture instead of the RGBA conversion; other backends keep the command encoder): `-Drinku.upload=direct|pbo|mapped|auto`, default **auto**
+   (mapped if `ARB_buffer_storage`, else pbo, else direct; logged once). `pbo` (`RinkuPboUpload`): view uploads of an
+   existing texture go through a ring of three pixel unpack buffers (map unsynchronized after the buffer's fence, copy
+   the dirty rows, `glTexSubImage2D` from the buffer, fence); `describeAndReset()` reports copy, GL call and fence-wait
+   times. `mapped` (`RinkuMappedUpload`): the two `RetainedPaintSurface` frame buffers become persistently mapped
+   unpack buffers (`replaceBuffers`), so the CEF thread's dirty-rect copy lands in them and the render thread only
+   calls `glTexSubImage2D` from the buffer and fences it; before each drain the last upload's fence is polled without
+   waiting. The CEF thread never calls GL and never frees a mapped buffer. A resize or close on the CEF thread retires
+   the front buffer; the render thread frees it at its next drain or at cleanup (it may still be uploading from it).
+   GTWebUI switches it at run time with `/gtwebui perf upload direct|pbo|mapped|auto`.
 
 ## Building
 

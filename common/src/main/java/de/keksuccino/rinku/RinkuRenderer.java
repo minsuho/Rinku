@@ -1,6 +1,7 @@
 package de.keksuccino.rinku;
 
 import com.mojang.renderpearl.api.GpuFormat;
+import com.mojang.renderpearl.backend.opengl.GlStateManager;
 import com.mojang.renderpearl.backend.opengl.GlTexture;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.renderpearl.api.textures.GpuTexture;
@@ -23,6 +24,7 @@ public class RinkuRenderer {
     private RinkuDirectTexture directTexture;
     private boolean textureRegistered = false;
     private ByteBuffer rgbaUploadBuffer;
+    private RinkuPboUpload pbo;
 
     protected RinkuRenderer(boolean transparent) {
         this.transparent = transparent;
@@ -97,6 +99,10 @@ public class RinkuRenderer {
             texture = null;
         }
         rgbaUploadBuffer = null;
+        if (pbo != null) {
+            pbo.close();
+            pbo = null;
+        }
         
         // Unregister from TextureManager
         if (textureRegistered && textureIdentifier != null) {
@@ -116,6 +122,35 @@ public class RinkuRenderer {
             textureHeight = height;
         }
         onPaint(buffer, width, 0, 0, 0, 0, width, height);
+    }
+
+    /**
+     * GTWebUI fork (M15-13 step 2): upload through the pixel buffer ring when it is switched on, the texture is a GL one
+     * (the OpenGL backend) and already has this size. BGRA goes straight to the GL texture, no RGBA conversion.
+     *
+     * @param regions clipped rects, null = the whole frame
+     * @return false when the caller has to upload the usual way (command encoder)
+     */
+    boolean uploadThroughPbo(ByteBuffer buffer, int width, int height, java.awt.Rectangle[] regions) {
+        RenderSystem.assertOnRenderThread();
+        if (!RinkuPboUpload.isEnabled() || !(texture instanceof GlTexture glTexture) || texture.isClosed()
+                || textureWidth != width || textureHeight != height) {
+            return false;
+        }
+        syncDirectTextureViewIfNeeded();
+        if (pbo == null) pbo = new RinkuPboUpload();
+        GlStateManager._bindTexture(glTexture.glId());
+        pbo.upload(buffer, width, height, regions);
+        return true;
+    }
+
+    /** GTWebUI fork (PBO step B): bind the texture for an upload from a mapped buffer, if it is a GL one of this size. */
+    boolean bindForMappedUpload(int width, int height) {
+        RenderSystem.assertOnRenderThread();
+        if (!(texture instanceof GlTexture glTexture) || texture.isClosed() || textureWidth != width || textureHeight != height) return false;
+        syncDirectTextureViewIfNeeded();
+        GlStateManager._bindTexture(glTexture.glId());
+        return true;
     }
 
     /** Uploads a tightly packed source rectangle. */
