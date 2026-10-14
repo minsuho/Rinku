@@ -240,8 +240,22 @@ public class RinkuBrowser extends CefBrowserOsr {
         }
     }
 
+    /**
+     * GTWebUI fork: the page's device scale (CSS px → physical px). The view rect stays in CSS px; CEF paints it, and
+     * popups, at this scale, so text stays sharp on a large window. Then {@link #resize} with the new view size.
+     */
+    public void setDeviceScale(double scale) {
+        updateScreenInfo(scale, 32, 8);
+        notifyScreenInfoChanged();
+    }
+
     @Override
     public void onPopupSize(CefBrowser browser, Rectangle size) {
+        double s = getDeviceScaleFactor();
+        if (size != null && s != 1) {   // CEF gives the popup in view (CSS) px; its pixels come at the device scale
+            size = new Rectangle((int) Math.floor(size.x * s), (int) Math.floor(size.y * s),
+                    (int) Math.ceil(size.width * s), (int) Math.ceil(size.height * s));
+        }
         paintCallbackLock.lock();
         try {
             super.onPopupSize(browser, size);
