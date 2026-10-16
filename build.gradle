@@ -166,8 +166,8 @@ subprojects {
         exclusiveContent {
             forRepository {
                 ivy {
-                    name = "Keksuccino JCEF GitHub Releases"
-                    url = uri("https://github.com/Keksuccino/jcef-rinku/releases/download")
+                    name = "GTWebUI JCEF fork GitHub Releases (minsuho/jcef-rinku)"
+                    url = uri("https://github.com/minsuho/jcef-rinku/releases/download")
                     patternLayout {
                         // GitHub publishes java-cef-<commit>/jcef-rinku[-sources].jar, so the
                         // synthetic organization and revision map directly to the release URL.
