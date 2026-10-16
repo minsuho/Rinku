@@ -111,6 +111,32 @@ public class RinkuRenderer {
         return true;
     }
 
+    /**
+     * GTWebUI fork spike (shared texture): the browser texture at this size for a GPU copy, its GL id. BGRA sources
+     * are copied byte for byte, so the texture swaps red and blue when sampled. 1.20.1 and 1.21.4: the RinkuDirectTexture's own
+     * id, given sized RGBA8 storage (glCopyImageSubData needs it) when it is new or resized.
+     */
+    int sharedTarget(int width, int height, boolean bgra) {
+        RenderSystem.assertOnRenderThread();
+        if (this.texture == null) return 0;
+        boolean fresh = !this.textureUploaded || this.textureWidth != width || this.textureHeight != height;
+        this.texture.ensureStorage(width, height);
+        this.textureWidth = width;
+        this.textureHeight = height;
+        int id = this.texture.getId();
+        if (fresh) {
+            GlStateManager._bindTexture(id);
+            org.lwjgl.opengl.GL11C.glTexImage2D(GL_TEXTURE_2D, 0, org.lwjgl.opengl.GL11C.GL_RGBA8, width, height, 0,
+                    org.lwjgl.opengl.GL11C.GL_RGBA, org.lwjgl.opengl.GL11C.GL_UNSIGNED_BYTE, (ByteBuffer) null);
+            org.lwjgl.opengl.GL11C.glTexParameteri(GL_TEXTURE_2D, org.lwjgl.opengl.GL33C.GL_TEXTURE_SWIZZLE_R,
+                    bgra ? org.lwjgl.opengl.GL11C.GL_BLUE : org.lwjgl.opengl.GL11C.GL_RED);
+            org.lwjgl.opengl.GL11C.glTexParameteri(GL_TEXTURE_2D, org.lwjgl.opengl.GL33C.GL_TEXTURE_SWIZZLE_B,
+                    bgra ? org.lwjgl.opengl.GL11C.GL_RED : org.lwjgl.opengl.GL11C.GL_BLUE);
+        }
+        this.textureUploaded = true;   // the caller copies the frame in right after
+        return id;
+    }
+
     /** GTWebUI fork (PBO step B): bind the texture for an upload from a mapped buffer, if it has this size. */
     boolean bindForMappedUpload(int width, int height) {
         RenderSystem.assertOnRenderThread();
