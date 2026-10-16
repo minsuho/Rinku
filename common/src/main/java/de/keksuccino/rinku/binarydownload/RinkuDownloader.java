@@ -34,7 +34,9 @@ public class RinkuDownloader {
 
     private static final Logger LOGGER = LogUtils.getLogger();
 
-    public static final String OFFICIAL_MIRROR = "https://github.com/Keksuccino/jcef-rinku/releases/download";
+    // GTWebUI fork: JCEF releases come from the minsuho/jcef-rinku fork (shared texture paint, M15-14)
+    public static final String OFFICIAL_MIRROR = "https://github.com/minsuho/jcef-rinku/releases/download";
+    public static final String UPSTREAM_OFFICIAL_MIRROR = "https://github.com/Keksuccino/jcef-rinku/releases/download";
     public static final String FORMER_REPOSITORY_OFFICIAL_MIRROR = "https://github.com/Keksuccino/jcef-mcef/releases/download";
     public static final String PREVIOUS_OFFICIAL_MIRROR = "https://github.com/Keksuccino/mcef_resources/releases/download";
     public static final String LEGACY_OFFICIAL_MIRROR = "https://mcef-download.cinemamod.com";
@@ -438,7 +440,7 @@ public class RinkuDownloader {
             return null;
         }
         String normalized = stripTrailingSlash(mirror.trim());
-        if (stripTrailingSlash(FORMER_REPOSITORY_OFFICIAL_MIRROR).equalsIgnoreCase(normalized) || stripTrailingSlash(PREVIOUS_OFFICIAL_MIRROR).equalsIgnoreCase(normalized) || stripTrailingSlash(LEGACY_OFFICIAL_MIRROR).equalsIgnoreCase(normalized)) {
+        if (stripTrailingSlash(UPSTREAM_OFFICIAL_MIRROR).equalsIgnoreCase(normalized) || stripTrailingSlash(FORMER_REPOSITORY_OFFICIAL_MIRROR).equalsIgnoreCase(normalized) || stripTrailingSlash(PREVIOUS_OFFICIAL_MIRROR).equalsIgnoreCase(normalized) || stripTrailingSlash(LEGACY_OFFICIAL_MIRROR).equalsIgnoreCase(normalized)) {
             return OFFICIAL_MIRROR;
         }
         return normalized;
