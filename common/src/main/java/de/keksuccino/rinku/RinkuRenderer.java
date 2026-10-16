@@ -144,6 +144,33 @@ public class RinkuRenderer {
         return true;
     }
 
+    /**
+     * GTWebUI fork spike (shared texture): the browser texture at this size for a GPU copy, its GL id. BGRA sources
+     * are copied byte for byte, so the texture swaps red and blue when sampled.
+     */
+    int sharedTarget(int width, int height, boolean bgra) {
+        RenderSystem.assertOnRenderThread();
+        boolean fresh = texture == null || texture.isClosed() || textureWidth != width || textureHeight != height;
+        if (fresh) {
+            GpuTexture replacement = RenderSystem.getDevice().createTexture("Rinku Browser Texture " + width + "x" + height,
+                    GpuTexture.USAGE_TEXTURE_BINDING | GpuTexture.USAGE_COPY_DST, GpuFormat.RGBA8_UNORM, width, height, 1, 1);
+            if (directTexture != null) directTexture.close();   // as onPaint: the view of the old texture goes first
+            if (texture != null) texture.close();
+            texture = replacement;
+            textureWidth = width;
+            textureHeight = height;
+        }
+        syncDirectTextureViewIfNeeded();
+        if (!(texture instanceof GlTexture glTexture)) return 0;
+        if (fresh) {
+            GlStateManager._bindTexture(glTexture.glId());
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, (ByteBuffer) null);
+            glTexParameteri(GL_TEXTURE_2D, org.lwjgl.opengl.GL33C.GL_TEXTURE_SWIZZLE_R, bgra ? GL_BLUE : GL_RED);
+            glTexParameteri(GL_TEXTURE_2D, org.lwjgl.opengl.GL33C.GL_TEXTURE_SWIZZLE_B, bgra ? GL_RED : GL_BLUE);
+        }
+        return glTexture.glId();
+    }
+
     /** GTWebUI fork (PBO step B): bind the texture for an upload from a mapped buffer, if it is a GL one of this size. */
     boolean bindForMappedUpload(int width, int height) {
         RenderSystem.assertOnRenderThread();
