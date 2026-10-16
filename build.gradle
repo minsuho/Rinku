@@ -153,7 +153,8 @@ subprojects {
             forRepository {
                 ivy {
                     name = "Keksuccino JCEF GitHub Releases"
-                    url = uri("https://github.com/Keksuccino/jcef-rinku/releases/download")
+                    // GTWebUI fork spike: -Pjcef_local_repo=G:/cef/jars takes java-cef-<commit>/jcef-rinku[-sources].jar from a local build
+                    url = providers.gradleProperty("jcef_local_repo").map { uri(it) }.getOrElse(uri("https://github.com/Keksuccino/jcef-rinku/releases/download"))
                     patternLayout {
                         // GitHub publishes java-cef-<commit>/jcef-rinku[-sources].jar, so the
                         // synthetic organization and revision map directly to the release URL.
