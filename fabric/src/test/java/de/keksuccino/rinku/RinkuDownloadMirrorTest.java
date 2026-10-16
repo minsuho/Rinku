@@ -12,7 +12,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 class RinkuDownloadMirrorTest {
     @Test
     void officialMirrorTargetsRenamedJcefRepository() {
-        assertEquals("https://github.com/Keksuccino/jcef-rinku/releases/download", RinkuDownloader.OFFICIAL_MIRROR);
+        assertEquals("https://github.com/minsuho/jcef-rinku/releases/download", RinkuDownloader.OFFICIAL_MIRROR);
+        assertEquals(RinkuDownloader.OFFICIAL_MIRROR, RinkuDownloader.normalizeOfficialMirror(RinkuDownloader.UPSTREAM_OFFICIAL_MIRROR));
     }
 
     @Test
