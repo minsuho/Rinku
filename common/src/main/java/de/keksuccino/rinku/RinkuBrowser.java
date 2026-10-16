@@ -52,6 +52,8 @@ public class RinkuBrowser extends CefBrowserOsr {
     private final RetainedPaintSurface retainedView;
     /** GTWebUI fork experiment (PBO step B), render thread. */
     private final RinkuMappedUpload mappedUpload = new RinkuMappedUpload();
+    /** GTWebUI fork spike: shared texture receiver, null on the pixel paint path. */
+    private final RinkuSharedTexture sharedTexture;
     /** GTWebUI fork: number of the newest CEF view paint (1, 2, ...). */
     private final AtomicLong paintFrame = new AtomicLong();
     private final CopyOnWriteArrayList<RinkuUploadListener> uploadListeners = new CopyOnWriteArrayList<>();
@@ -119,7 +121,12 @@ public class RinkuBrowser extends CefBrowserOsr {
     protected volatile boolean popupDrawn = false;
 
     public RinkuBrowser(RinkuClient client, String url, boolean transparent) {
-        super(client.getHandle(), url, transparent, null);
+        this(client, url, transparent, RinkuSharedTexture.browserSettings());
+    }
+
+    private RinkuBrowser(RinkuClient client, String url, boolean transparent, org.cef.CefBrowserSettings sharedSettings) {
+        super(client.getHandle(), url, transparent, null, sharedSettings);
+        sharedTexture = sharedSettings != null ? new RinkuSharedTexture() : null;
         renderer = new RinkuRenderer(transparent);
         retainedView = new RetainedPaintSurface(transparent);
         cursorChangeListener = (cefCursorID) -> setCursor(resolveCursorType(cefCursorID));
@@ -220,7 +227,7 @@ public class RinkuBrowser extends CefBrowserOsr {
      * browsers. -1 when there is no alpha copy yet (opaque browser, no paint, or on the render-thread paint path).
      */
     public int alphaAt(int x, int y) {
-        return retainedView.alphaAt(x, y);
+        return sharedTexture != null ? sharedTexture.alphaAt(x, y) : retainedView.alphaAt(x, y);
     }
 
     /**
@@ -229,7 +236,7 @@ public class RinkuBrowser extends CefBrowserOsr {
      * not written). Used by slot-order checks (SP-04).
      */
     public int uploadedPixelAt(int x, int y) {
-        return retainedView.uploadedPixelAt(x, y);
+        return sharedTexture != null ? sharedTexture.uploadedPixelAt(x, y) : retainedView.uploadedPixelAt(x, y);
     }
 
     // Popups
@@ -316,6 +323,16 @@ public class RinkuBrowser extends CefBrowserOsr {
             // The base class gives listeners isolated callback-scoped views.
             super.onPaint(browser, popup, dirtyRects, buffer, width, height);
         }
+    }
+
+    @Override
+    public void onAcceleratedPaint(CefBrowser browser, boolean popup, Rectangle[] dirtyRects, org.cef.handler.CefAcceleratedPaintInfo info) {
+        if (sharedTexture == null || !asyncPaintBufferLeases.isAccepting() || closeController.isCloseRequested()) return;
+        if (RenderSystem.isOnRenderThread()) {
+            LOGGER.warn("[shared] accelerated paint on the render thread is not handled in the spike");
+            return;
+        }
+        sharedTexture.accept(popup, info, popup ? paintFrame.get() : paintFrame.incrementAndGet());
     }
 
     private boolean onPaint(boolean popup, Rectangle[] dirtyRects, ByteBuffer buffer, int width, int height) {
@@ -456,6 +473,15 @@ public class RinkuBrowser extends CefBrowserOsr {
     }
 
     private void drainRetainedView() {
+        if (sharedTexture != null) {
+            long frame = sharedTexture.drain(renderer);
+            if (frame >= 0) {
+                lastWidth = renderer.getTextureWidth();
+                lastHeight = renderer.getTextureHeight();
+                notifyUploaded(frame, new Rectangle[] { new Rectangle(0, 0, lastWidth, lastHeight) }, true);
+            }
+            return;
+        }
         // PBO step B: the buffer the last mapped upload read goes back to the CEF thread at this drain
         if (!mappedUpload.readyToDrain()) return;
         mappedUpload.collect(retainedView);
@@ -1132,6 +1158,7 @@ public class RinkuBrowser extends CefBrowserOsr {
         Throwable failure = null;
         try {
             // Cleanup is safe before successful initialization and is required when initialization failed partway.
+            if (sharedTexture != null) sharedTexture.close();
             renderer.cleanup();
             mappedUpload.close();
             retainedView.releaseRetired();
