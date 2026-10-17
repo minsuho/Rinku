@@ -342,7 +342,8 @@ public class RinkuBrowser extends CefBrowserOsr {
             LOGGER.warn("[shared] accelerated paint on the render thread is not handled in the spike");
             return;
         }
-        sharedTexture.accept(popup, info, popup ? paintFrame.get() : paintFrame.incrementAndGet());
+        java.awt.Rectangle popupRect = popupPaintState.visible() ? popupPaintState.geometry() : null;
+        sharedTexture.accept(popup, info, popup ? paintFrame.get() : paintFrame.incrementAndGet(), popupRect);
     }
 
     private boolean onPaint(boolean popup, Rectangle[] dirtyRects, ByteBuffer buffer, int width, int height) {
