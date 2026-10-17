@@ -11,7 +11,6 @@ import org.lwjgl.system.MemoryUtil;
 import org.slf4j.Logger;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import static org.lwjgl.glfw.GLFW.*;
 import static org.lwjgl.opengl.EXTMemoryObject.*;
 import static org.lwjgl.opengl.EXTMemoryObjectWin32.GL_HANDLE_TYPE_D3D11_IMAGE_EXT;
 import static org.lwjgl.opengl.EXTMemoryObjectWin32.glImportMemoryWin32HandleEXT;
@@ -23,7 +22,7 @@ import static org.lwjgl.opengl.GL12C.GL_BGRA;
 
 /**
  * GTWebUI fork spike (M15-14 S0a, docs/gpu-shared-texture.md §4.1): view paints arrive as a shared D3D11 texture
- * ({@link RinkuForkOptions#setSharedTexture}, or {@code -Drinku.sharedTexture=true}; Windows). On the CEF thread, in a hidden GLFW context shared with the game's,
+ * ({@link RinkuForkOptions#setSharedTexture}, or {@code -Drinku.sharedTexture=true}; Windows). On the CEF thread, in a hidden GL context shared with the game's ({@link RinkuSharedContext}),
  * each callback imports the texture, copies it into a free slot, waits for that copy and releases the import (CEF
  * returns the texture to its pool when the callback ends, so nothing is cached). The render thread copies the newest
  * finished slot into the browser texture and hands the slot back once its own copy fence has passed.
@@ -36,7 +35,7 @@ final class RinkuSharedTexture {
     private static final long REPORT_NANOS = 5_000_000_000L;
 
     // one hidden context for every browser, current on the CEF thread only
-    private static long contextWindow;
+    private static boolean contextReady;
     private static Thread contextThread;
     private static boolean contextFailed;
 
@@ -115,25 +114,15 @@ final class RinkuSharedTexture {
     }
 
     private static boolean prepareContext() {
-        if (contextWindow != 0) return true;
+        if (contextReady) return true;
         if (contextFailed) return false;
-        long game = Minecraft.getInstance().getWindow().handle();
-        glfwDefaultWindowHints();
-        glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
-        glfwWindowHint(GLFW_CLIENT_API, glfwGetWindowAttrib(game, GLFW_CLIENT_API));
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, glfwGetWindowAttrib(game, GLFW_CONTEXT_VERSION_MAJOR));
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, glfwGetWindowAttrib(game, GLFW_CONTEXT_VERSION_MINOR));
-        glfwWindowHint(GLFW_OPENGL_PROFILE, glfwGetWindowAttrib(game, GLFW_OPENGL_PROFILE));
-        glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, glfwGetWindowAttrib(game, GLFW_OPENGL_FORWARD_COMPAT));
-        contextWindow = glfwCreateWindow(1, 1, "Rinku shared texture", 0L, game);
-        glfwDefaultWindowHints();
-        if (contextWindow == 0) {
+        contextReady = RinkuSharedContext.create();
+        if (!contextReady) {
             contextFailed = true;
             LOGGER.error("[shared] could not create the shared GL context; browsers use pixel paints");
             return false;
         }
-        LOGGER.info("[shared] shared GL context created (GL {}.{})", glfwGetWindowAttrib(game, GLFW_CONTEXT_VERSION_MAJOR),
-                glfwGetWindowAttrib(game, GLFW_CONTEXT_VERSION_MINOR));
+        LOGGER.info("[shared] shared GL context created ({})", RinkuSharedContext.describe());
         return true;
     }
 
@@ -143,7 +132,7 @@ final class RinkuSharedTexture {
         if (contextThread != null || contextFailed) {
             return false;
         }
-        glfwMakeContextCurrent(contextWindow);
+        RinkuSharedContext.makeCurrent();
         GLCapabilities caps = GL.createCapabilities();
         contextThread = current;
         boolean ok = caps.GL_EXT_memory_object && caps.GL_EXT_memory_object_win32 && (caps.OpenGL43 || caps.GL_ARB_copy_image);
