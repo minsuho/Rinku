@@ -17,7 +17,7 @@ final class RinkuSharedContext {
     /** Render thread, game context current: creates the context once; false when that failed. */
     static boolean create() {
         if (window != 0) return true;
-        long game = Minecraft.getInstance().getWindow().handle();
+        long game = Minecraft.getInstance().getWindow().getWindow();
         glfwDefaultWindowHints();
         glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
         glfwWindowHint(GLFW_CLIENT_API, glfwGetWindowAttrib(game, GLFW_CLIENT_API));
@@ -32,7 +32,7 @@ final class RinkuSharedContext {
 
     /** "GL 3.3" of the game's context, for the log. Render thread. */
     static String describe() {
-        long game = Minecraft.getInstance().getWindow().handle();
+        long game = Minecraft.getInstance().getWindow().getWindow();
         return "GL " + glfwGetWindowAttrib(game, GLFW_CONTEXT_VERSION_MAJOR) + "." + glfwGetWindowAttrib(game, GLFW_CONTEXT_VERSION_MINOR);
     }
 
