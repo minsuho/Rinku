@@ -148,6 +148,16 @@ public class RinkuBrowser extends CefBrowserOsr {
         return renderer;
     }
 
+    /** GTWebUI fork (M15-14): this browser's paints come as a shared texture, not pixels (decided at creation). */
+    public boolean usesSharedTexture() {
+        return sharedTexture != null;
+    }
+
+    /** GTWebUI fork: shared texture paints that failed to import or copy so far; 0 for pixel paints. */
+    public long sharedTextureFailures() {
+        return sharedTexture != null ? sharedTexture.failures() : 0;
+    }
+    
     /**
      * Convenience method to get the resource location for this browser's texture.
      * This can be used directly with GuiGraphics rendering methods.
