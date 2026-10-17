@@ -15,6 +15,10 @@ public final class RinkuForkOptions {
     private static volatile Path rootCachePath;
     private static volatile Path cachePath;
     private static volatile Path logFile;
+    /** What the game's GL said on the render thread before CEF started; null until then. */
+    private static volatile GlGpu glGpu;
+
+    private record GlGpu(boolean importExtensions, @Nullable String adapterLuid) {}
 
     private RinkuForkOptions() {}
 
@@ -53,22 +57,65 @@ public final class RinkuForkOptions {
     }
 
     /**
-     * GTWebUI fork: the game's GPU as its graphics device reports it, and whether that GL has the extensions the
-     * shared texture imports with — true when the device's extension list names them, null when it does not (the list
-     * holds only what the game uses: on an RTX 4060 it did not name them, though the import works). Null before the
-     * device exists.
+     * GTWebUI fork: the game's GPU as its graphics device reports it, whether that GL has the extensions the shared
+     * texture imports with, and its adapter LUID. The last two come from the game's GL itself, read on the render
+     * thread just before CEF starts ({@link #readGameGl}); before that the extensions are true when the device's list
+     * names them and null otherwise (the list holds only what the game uses: on an RTX 4060 it did not name them,
+     * though the import works). Null before the device exists.
      */
     public static @Nullable GpuInfo gpu() {
         com.mojang.blaze3d.systems.GpuDevice device = com.mojang.blaze3d.systems.RenderSystem.tryGetDevice();
         if (device == null) return null;
         com.mojang.blaze3d.systems.DeviceInfo info = device.getDeviceInfo();
-        java.util.Set<String> ext = info.underlyingExtensions();
-        Boolean imports = ext.contains("GL_EXT_memory_object") && ext.contains("GL_EXT_memory_object_win32") ? Boolean.TRUE : null;
-        return new GpuInfo(info.name(), info.vendorName(), info.backendName() + " " + info.driverInfo(), imports);
+        GlGpu gl = glGpu;
+        Boolean imports;
+        if (gl != null) {
+            imports = gl.importExtensions();
+        } else {
+            java.util.Set<String> ext = info.underlyingExtensions();
+            imports = ext.contains("GL_EXT_memory_object") && ext.contains("GL_EXT_memory_object_win32") ? Boolean.TRUE : null;
+        }
+        return new GpuInfo(info.name(), info.vendorName(), info.backendName() + " " + info.driverInfo(), imports,
+                gl == null ? null : gl.adapterLuid());
     }
 
-    /** @param importExtensions GL_EXT_memory_object and GL_EXT_memory_object_win32: true, or null when unknown */
-    public record GpuInfo(String name, String vendor, String driver, @Nullable Boolean importExtensions) {}
+    /**
+     * @param importExtensions GL_EXT_memory_object and GL_EXT_memory_object_win32: true, false, or null when unknown
+     * @param adapterLuid      the game GPU's adapter LUID as Chromium's {@code --use-adapter-luid} takes it ("high,low",
+     *                         high part signed, low part unsigned); null when the GL cannot tell
+     */
+    public record GpuInfo(String name, String vendor, String driver, @Nullable Boolean importExtensions, @Nullable String adapterLuid) {}
+
+    /**
+     * Render thread, game context current (CefUtil.init, just before CEF starts): asks the game's GL for the import
+     * extensions and, through {@code GL_DEVICE_LUID_EXT}, which adapter it runs on, so Chromium can be put on the same
+     * GPU (a texture shared from another adapter cannot be imported).
+     */
+    public static void readGameGl() {
+        if (glGpu != null) return;
+        try {
+            org.lwjgl.opengl.GLCapabilities caps = org.lwjgl.opengl.GL.getCapabilities();
+            boolean imports = caps.GL_EXT_memory_object && caps.GL_EXT_memory_object_win32;
+            String luid = null;
+            if (imports) {
+                try (org.lwjgl.system.MemoryStack stack = org.lwjgl.system.MemoryStack.stackPush()) {
+                    java.nio.ByteBuffer b = stack.calloc(org.lwjgl.opengl.EXTMemoryObjectWin32.GL_LUID_SIZE_EXT).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+                    while (org.lwjgl.opengl.GL11C.glGetError() != 0) {
+                        // drop errors left by the game
+                    }
+                    org.lwjgl.opengl.EXTMemoryObject.glGetUnsignedBytevEXT(org.lwjgl.opengl.EXTMemoryObjectWin32.GL_DEVICE_LUID_EXT, b);
+                    if (org.lwjgl.opengl.GL11C.glGetError() == 0) {
+                        long low = b.getInt(0) & 0xFFFFFFFFL;   // LUID { DWORD LowPart; LONG HighPart; }
+                        int high = b.getInt(4);
+                        if (low != 0 || high != 0) luid = high + "," + low;
+                    }
+                }
+            }
+            glGpu = new GlGpu(imports, luid);
+        } catch (RuntimeException | LinkageError e) {
+            org.slf4j.LoggerFactory.getLogger(RinkuForkOptions.class).warn("[shared] could not read the game's GL: {}", e.toString());
+        }
+    }
 
     public static @Nullable Path rootCachePath() {
         return rootCachePath;
