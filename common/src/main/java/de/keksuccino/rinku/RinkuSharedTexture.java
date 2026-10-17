@@ -69,10 +69,18 @@ final class RinkuSharedTexture {
     private volatile int uploadedWidth, uploadedHeight;
     private long maskNanos, maskMaxNanos;
 
+    // popup (<select> list, CEF thread): its last picture, and while it shows a copy of the view without it, so a
+    // paint of either one alone can make the next frame
+    private int popupTexture, popupWidth, popupHeight;
+    private int baseTexture, baseWidth, baseHeight;
+    private boolean baseValid;
+    private boolean popupPainted;   // popupTexture holds this showing's picture (not the last popup's)
+
     private final Slot[] slots = { new Slot(), new Slot() };
     private final Object lock = new Object();
     private long publishSeq;
     private boolean closed;
+    private boolean busy;   // a callback runs (guarded by lock): close leaves the popup textures to it
 
     // CEF thread counters (read for the report on the same thread)
     private long callbacks, dropped, failures, popups;
@@ -146,8 +154,11 @@ final class RinkuSharedTexture {
         return ok;
     }
 
-    /** CEF thread. Returns the frame number it published, or -1. */
-    long accept(boolean popup, CefAcceleratedPaintInfo info, long frame) {
+    /**
+     * CEF thread. Returns the frame number it published, or -1. {@code popupRect}: where the popup shows on the view
+     * (physical px), null while hidden.
+     */
+    long accept(boolean popup, CefAcceleratedPaintInfo info, long frame, java.awt.Rectangle popupRect) {
         long start = System.nanoTime();
         if (reportStart == 0) reportStart = start;
         if (lastCallback != 0 && start - lastCallback > 1_000_000_000L) {
@@ -156,11 +167,11 @@ final class RinkuSharedTexture {
         lastCallback = start;
         totalCallbacks++;
         callbacks++;
+        synchronized (lock) {
+            if (closed) return -1;
+            busy = true;
+        }
         try {
-            if (popup) {
-                if (popups++ == 0) LOGGER.warn("[shared] popup paints are not handled in the spike");
-                return -1;
-            }
             if (info == null || info.shared_texture_handle == 0 || info.width <= 0 || info.height <= 0) {
                 failures++;
                 return -1;
@@ -176,20 +187,42 @@ final class RinkuSharedTexture {
                 lastHeight = info.height;
                 LOGGER.info("[shared] #{} format {} size {}x{}", Integer.toHexString(id), info.format, info.width, info.height);
             }
+            if (popup) {
+                popups++;
+                if (popupRect == null) return -1;
+                if (!withImported(info, source -> copyPopup(source, info.width, info.height))) {
+                    failures++;
+                    return -1;
+                }
+                if (!baseValid) return -1;   // the view paint that showing the popup asks for composes it
+            }
             Slot slot = takeWritable();
             if (slot == null) {
                 dropped++;
                 return -1;
             }
             boolean done = false;
+            int w = popup ? baseWidth : info.width, h = popup ? baseHeight : info.height;
             try {
-                done = copyInto(slot, info);
+                if (popup) {
+                    sizeSlot(slot, w, h);
+                    glCopyImageSubData(baseTexture, GL_TEXTURE_2D, 0, 0, 0, 0, slot.texture, GL_TEXTURE_2D, 0, 0, 0, 0, w, h, 1);
+                    overlayPopup(slot, popupRect);
+                    readAndWait(slot, lastFormat);
+                    done = true;
+                } else {
+                    done = withImported(info, source -> copyView(slot, source, info, popupRect));
+                }
             } finally {
-                publish(slot, done, frame, info.width, info.height);
+                publish(slot, done, frame, w, h);
             }
             if (!done) failures++;
             return done ? frame : -1;
         } finally {
+            synchronized (lock) {
+                busy = false;
+                if (closed) deletePopupTextures();
+            }
             long took = System.nanoTime() - start;
             cefNanos += took;
             cefMaxNanos = Math.max(cefMaxNanos, took);
@@ -229,16 +262,93 @@ final class RinkuSharedTexture {
         }
     }
 
-    private boolean copyInto(Slot slot, CefAcceleratedPaintInfo info) {
+    private static void sizeSlot(Slot slot, int w, int h) {
+        if (slot.texture != 0 && slot.width == w && slot.height == h) return;
+        if (slot.texture != 0) glDeleteTextures(slot.texture);
+        slot.texture = newTexture(w, h);
+        slot.width = w;
+        slot.height = h;
+    }
+
+    private static int newTexture(int w, int h) {
+        int t = glGenTextures();
+        glBindTexture(GL_TEXTURE_2D, t);
+        glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, w, h);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        return t;
+    }
+
+    /** The view's picture into the slot; while a popup shows, also kept without it and the popup drawn over it. */
+    private void copyView(Slot slot, int source, CefAcceleratedPaintInfo info, java.awt.Rectangle popupRect) {
         int w = info.width, h = info.height;
-        if (slot.texture == 0 || slot.width != w || slot.height != h) {
-            if (slot.texture != 0) glDeleteTextures(slot.texture);
-            slot.texture = glGenTextures();
-            glBindTexture(GL_TEXTURE_2D, slot.texture);
-            glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, w, h);
-            slot.width = w;
-            slot.height = h;
+        sizeSlot(slot, w, h);
+        glCopyImageSubData(source, GL_TEXTURE_2D, 0, 0, 0, 0, slot.texture, GL_TEXTURE_2D, 0, 0, 0, 0, w, h, 1);
+        if (popupRect != null) {
+            if (baseTexture == 0 || baseWidth != w || baseHeight != h) {
+                if (baseTexture != 0) glDeleteTextures(baseTexture);
+                baseTexture = newTexture(w, h);
+                baseWidth = w;
+                baseHeight = h;
+            }
+            glCopyImageSubData(source, GL_TEXTURE_2D, 0, 0, 0, 0, baseTexture, GL_TEXTURE_2D, 0, 0, 0, 0, w, h, 1);
+            baseValid = true;
+            overlayPopup(slot, popupRect);
+        } else {
+            baseValid = false;
+            popupPainted = false;
         }
+        readAndWait(slot, info.format);
+    }
+
+    private void copyPopup(int source, int w, int h) {
+        if (popupTexture == 0 || popupWidth != w || popupHeight != h) {
+            if (popupTexture != 0) glDeleteTextures(popupTexture);
+            popupTexture = newTexture(w, h);
+            popupWidth = w;
+            popupHeight = h;
+        }
+        glCopyImageSubData(source, GL_TEXTURE_2D, 0, 0, 0, 0, popupTexture, GL_TEXTURE_2D, 0, 0, 0, 0, w, h, 1);
+        popupPainted = true;
+        waitForCopies();   // the source returns to CEF's pool when the callback ends
+    }
+
+    /** The popup's last picture over the slot at {@code rect}, cut to the view (rows run top-down in both). */
+    private void overlayPopup(Slot slot, java.awt.Rectangle rect) {
+        if (rect == null || popupTexture == 0 || !popupPainted) return;
+        int x0 = Math.max(0, rect.x), y0 = Math.max(0, rect.y);
+        int x1 = Math.min(slot.width, rect.x + Math.min(rect.width, popupWidth));
+        int y1 = Math.min(slot.height, rect.y + Math.min(rect.height, popupHeight));
+        if (x1 <= x0 || y1 <= y0) return;
+        glCopyImageSubData(popupTexture, GL_TEXTURE_2D, 0, x0 - rect.x, y0 - rect.y, 0,
+                slot.texture, GL_TEXTURE_2D, 0, x0, y0, 0, x1 - x0, y1 - y0, 1);
+    }
+
+    /** Marker, stamp and alpha mask of the finished slot, then wait until the GPU has done every copy. */
+    private void readAndWait(Slot slot, int format) {
+        long maskStart = System.nanoTime();
+        readAlphaAndMarker(slot, format);
+        long maskTook = System.nanoTime() - maskStart;
+        maskNanos += maskTook;
+        maskMaxNanos = Math.max(maskMaxNanos, maskTook);
+        waitForCopies();
+    }
+
+    private void waitForCopies() {
+        long fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+        long waitStart = System.nanoTime();
+        int result = glClientWaitSync(fence, GL_SYNC_FLUSH_COMMANDS_BIT, FENCE_TIMEOUT_NANOS);
+        glDeleteSync(fence);
+        if (result != GL_ALREADY_SIGNALED && result != GL_CONDITION_SATISFIED) {
+            // the copy may still read the pooled texture: do not let the callback return before it ends
+            LOGGER.warn("[shared] copy fence result 0x{}, waiting with glFinish", Integer.toHexString(result));
+            glFinish();
+        }
+        waitMaxNanos = Math.max(waitMaxNanos, System.nanoTime() - waitStart);
+    }
+
+    /** Imports the callback's texture for {@code use} (which waits for its copies) and releases it; false when the import failed. */
+    private boolean withImported(CefAcceleratedPaintInfo info, java.util.function.IntConsumer use) {
+        int w = info.width, h = info.height;
         int memory = glCreateMemoryObjectsEXT();
         int source = 0;
         try {
@@ -253,22 +363,8 @@ final class RinkuSharedTexture {
                 if (failures < 5) LOGGER.error("[shared] import failed: GL error 0x{}", Integer.toHexString(error));
                 return false;
             }
-            glCopyImageSubData(source, GL_TEXTURE_2D, 0, 0, 0, 0, slot.texture, GL_TEXTURE_2D, 0, 0, 0, 0, w, h, 1);
-            long maskStart = System.nanoTime();
-            readAlphaAndMarker(slot, info.format);
-            long maskTook = System.nanoTime() - maskStart;
-            maskNanos += maskTook;
-            maskMaxNanos = Math.max(maskMaxNanos, maskTook);
-            long fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
-            long waitStart = System.nanoTime();
-            int result = glClientWaitSync(fence, GL_SYNC_FLUSH_COMMANDS_BIT, FENCE_TIMEOUT_NANOS);
-            glDeleteSync(fence);
-            if (result != GL_ALREADY_SIGNALED && result != GL_CONDITION_SATISFIED) {
-                // the copy may still read the pooled texture: do not let the callback return before it ends
-                LOGGER.warn("[shared] copy fence result 0x{}, waiting with glFinish", Integer.toHexString(result));
-                glFinish();
-            }
-            waitMaxNanos = Math.max(waitMaxNanos, System.nanoTime() - waitStart);
+            glBindTexture(GL_TEXTURE_2D, 0);
+            use.accept(source);
             return true;
         } finally {
             glBindTexture(GL_TEXTURE_2D, 0);
@@ -463,6 +559,15 @@ final class RinkuSharedTexture {
                     s.texture = 0;
                 }
             }
+            if (!busy) deletePopupTextures();
         }
+    }
+
+    /** Under lock, no callback running. */
+    private void deletePopupTextures() {
+        if (popupTexture != 0) glDeleteTextures(popupTexture);
+        if (baseTexture != 0) glDeleteTextures(baseTexture);
+        popupTexture = baseTexture = 0;
+        baseValid = popupPainted = false;
     }
 }
