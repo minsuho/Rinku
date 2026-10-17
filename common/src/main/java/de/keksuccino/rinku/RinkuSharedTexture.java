@@ -183,7 +183,9 @@ final class RinkuSharedTexture {
                     failures++;
                     return -1;
                 }
-                if (!baseValid) return -1;   // the view paint that showing the popup asks for composes it
+                // no view paint since the popup showed: the last frame (it has no popup on it) becomes the base, so the
+                // popup shows even if the view does not paint again
+                if (!baseValid && !baseFromLastFrame()) return -1;
             }
             Slot slot = takeWritable();
             if (slot == null) {
@@ -299,6 +301,27 @@ final class RinkuSharedTexture {
         glCopyImageSubData(source, GL_TEXTURE_2D, 0, 0, 0, 0, popupTexture, GL_TEXTURE_2D, 0, 0, 0, 0, w, h, 1);
         popupPainted = true;
         waitForCopies();   // the source returns to CEF's pool when the callback ends
+    }
+
+    /** CEF thread: copies the newest published frame into the base; false when there is none yet. */
+    private boolean baseFromLastFrame() {
+        Slot last = null;
+        synchronized (lock) {
+            for (Slot s : slots) {
+                if (s.texture != 0 && s.state != State.WRITING && s.seq > 0 && (last == null || s.seq > last.seq)) last = s;
+            }
+        }
+        if (last == null) return false;
+        int w = last.width, h = last.height;
+        if (baseTexture == 0 || baseWidth != w || baseHeight != h) {
+            if (baseTexture != 0) glDeleteTextures(baseTexture);
+            baseTexture = newTexture(w, h);
+            baseWidth = w;
+            baseHeight = h;
+        }
+        glCopyImageSubData(last.texture, GL_TEXTURE_2D, 0, 0, 0, 0, baseTexture, GL_TEXTURE_2D, 0, 0, 0, 0, w, h, 1);
+        baseValid = true;
+        return true;
     }
 
     /** The popup's last picture over the slot at {@code rect}, cut to the view (rows run top-down in both). */
