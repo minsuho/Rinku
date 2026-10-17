@@ -342,6 +342,7 @@ public class RinkuBrowser extends CefBrowserOsr {
             LOGGER.warn("[shared] accelerated paint on the render thread is not handled in the spike");
             return;
         }
+        if (sharedTexture.ignoreCallback(popup)) return;   // test fault: as if CEF stopped painting
         java.awt.Rectangle popupRect = popupPaintState.visible() ? popupPaintState.geometry() : null;
         sharedTexture.accept(popup, info, popup ? paintFrame.get() : paintFrame.incrementAndGet(), popupRect);
     }
@@ -491,6 +492,7 @@ public class RinkuBrowser extends CefBrowserOsr {
                 lastHeight = renderer.getTextureHeight();
                 notifyUploaded(frame, new Rectangle[] { new Rectangle(0, 0, lastWidth, lastHeight) }, true);
             }
+            if (sharedTexture.takeRepaint()) invalidate();   // a dropped paint comes again now that a slot is free
             return;
         }
         // PBO step B: the buffer the last mapped upload read goes back to the CEF thread at this drain
