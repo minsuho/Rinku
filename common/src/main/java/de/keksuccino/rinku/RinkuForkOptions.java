@@ -18,7 +18,7 @@ public final class RinkuForkOptions {
     /** What the game's GL said on the render thread before CEF started; null until then. */
     private static volatile GlGpu glGpu;
 
-    private record GlGpu(boolean importExtensions, @Nullable String adapterLuid) {}
+    private record GlGpu(String name, String vendor, String driver, boolean importExtensions, @Nullable String adapterLuid) {}
 
     private RinkuForkOptions() {}
 
@@ -58,25 +58,13 @@ public final class RinkuForkOptions {
 
     /**
      * GTWebUI fork: the game's GPU as its graphics device reports it, whether that GL has the extensions the shared
-     * texture imports with, and its adapter LUID. The last two come from the game's GL itself, read on the render
-     * thread just before CEF starts ({@link #readGameGl}); before that the extensions are true when the device's list
-     * names them and null otherwise (the list holds only what the game uses: on an RTX 4060 it did not name them,
-     * though the import works). Null before the device exists.
+     * texture imports with, and its adapter LUID, all read on the render thread just before CEF starts
+     * ({@link #readGameGl}: on 26.1.2 the device asks GL for its strings, which another thread cannot). Null before.
      */
     public static @Nullable GpuInfo gpu() {
-        com.mojang.blaze3d.systems.GpuDevice device = com.mojang.blaze3d.systems.RenderSystem.tryGetDevice();
-        if (device == null) return null;
-        com.mojang.blaze3d.systems.DeviceInfo info = device.getDeviceInfo();
+        // 26.1.2: the device asks GL for its strings, so they are read with the rest on the render thread
         GlGpu gl = glGpu;
-        Boolean imports;
-        if (gl != null) {
-            imports = gl.importExtensions();
-        } else {
-            java.util.Set<String> ext = info.underlyingExtensions();
-            imports = ext.contains("GL_EXT_memory_object") && ext.contains("GL_EXT_memory_object_win32") ? Boolean.TRUE : null;
-        }
-        return new GpuInfo(info.name(), info.vendorName(), info.backendName() + " " + info.driverInfo(), imports,
-                gl == null ? null : gl.adapterLuid());
+        return gl == null ? null : new GpuInfo(gl.name(), gl.vendor(), gl.driver(), gl.importExtensions(), gl.adapterLuid());
     }
 
     /**
@@ -111,7 +99,8 @@ public final class RinkuForkOptions {
                     }
                 }
             }
-            glGpu = new GlGpu(imports, luid);
+            com.mojang.blaze3d.systems.GpuDevice device = com.mojang.blaze3d.systems.RenderSystem.getDevice();
+            glGpu = new GlGpu(device.getRenderer(), device.getVendor(), device.getBackendName() + " " + device.getVersion(), imports, luid);
         } catch (RuntimeException | LinkageError e) {
             org.slf4j.LoggerFactory.getLogger(RinkuForkOptions.class).warn("[shared] could not read the game's GL: {}", e.toString());
         }
