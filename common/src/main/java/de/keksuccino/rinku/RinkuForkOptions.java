@@ -64,9 +64,9 @@ public final class RinkuForkOptions {
      * though the import works). Null before the device exists.
      */
     public static @Nullable GpuInfo gpu() {
-        com.mojang.blaze3d.systems.GpuDevice device = com.mojang.blaze3d.systems.RenderSystem.tryGetDevice();
+        com.mojang.renderpearl.api.device.GpuDevice device = com.mojang.blaze3d.systems.RenderSystem.tryGetDevice();
         if (device == null) return null;
-        com.mojang.blaze3d.systems.DeviceInfo info = device.getDeviceInfo();
+        com.mojang.renderpearl.api.device.DeviceInfo info = device.getDeviceInfo();
         GlGpu gl = glGpu;
         Boolean imports;
         if (gl != null) {
