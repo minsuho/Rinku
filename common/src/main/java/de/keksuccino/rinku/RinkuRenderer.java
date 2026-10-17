@@ -12,6 +12,8 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.UUID;
 
+import static org.lwjgl.opengl.GL12.*;
+
 public class RinkuRenderer {
 
     private final boolean transparent;
