@@ -23,7 +23,7 @@ import static org.lwjgl.opengl.GL12C.GL_BGRA;
 
 /**
  * GTWebUI fork spike (M15-14 S0a, docs/gpu-shared-texture.md §4.1): view paints arrive as a shared D3D11 texture
- * ({@code -Drinku.sharedTexture=true}, Windows). On the CEF thread, in a hidden GLFW context shared with the game's,
+ * ({@link RinkuForkOptions#setSharedTexture}, or {@code -Drinku.sharedTexture=true}; Windows). On the CEF thread, in a hidden GLFW context shared with the game's,
  * each callback imports the texture, copies it into a free slot, waits for that copy and releases the import (CEF
  * returns the texture to its pool when the callback ends, so nothing is cached). The render thread copies the newest
  * finished slot into the browser texture and hands the slot back once its own copy fence has passed.
@@ -31,7 +31,7 @@ import static org.lwjgl.opengl.GL12C.GL_BGRA;
 final class RinkuSharedTexture {
 
     private static final Logger LOGGER = LogUtils.getLogger();
-    static final boolean ENABLED = Boolean.getBoolean("rinku.sharedTexture");
+    private static volatile boolean enabled = Boolean.getBoolean("rinku.sharedTexture");
     private static final long FENCE_TIMEOUT_NANOS = 1_000_000_000L;
     private static final long REPORT_NANOS = 5_000_000_000L;
 
@@ -76,6 +76,7 @@ final class RinkuSharedTexture {
 
     // CEF thread counters (read for the report on the same thread)
     private long callbacks, dropped, failures, popups;
+    private volatile long failuresBefore;   // failures of earlier report periods
     private long cefNanos, cefMaxNanos, waitMaxNanos;
     private long reportStart, lastCallback, totalCallbacks;
     private final int id = System.identityHashCode(this);
@@ -86,10 +87,23 @@ final class RinkuSharedTexture {
 
     /** Settings for a new browser: shared texture on, or null for the usual pixel paints. Render thread. */
     static CefBrowserSettings browserSettings() {
-        if (!ENABLED || !prepareContext()) return null;
+        if (!enabled || !prepareContext()) return null;
         CefBrowserSettings settings = new CefBrowserSettings();
         settings.shared_texture_enabled = true;
         return settings;
+    }
+
+    static void setEnabled(boolean on) {
+        enabled = on;
+    }
+
+    static boolean enabled() {
+        return enabled;
+    }
+
+    /** Callbacks that could not import or copy the texture so far (approximate, any thread). */
+    long failures() {
+        return failuresBefore + failures;
     }
 
     private static boolean prepareContext() {
@@ -273,6 +287,7 @@ final class RinkuSharedTexture {
                 String.format("%.3f", waitMaxNanos / 1e6), String.format("%.3f", callbacks == 0 ? 0 : maskNanos / 1e6 / callbacks),
                 String.format("%.3f", maskMaxNanos / 1e6), String.format("%.1f", (copiesSeen) / secs));
         copiesSeen = 0;
+        failuresBefore += failures;
         callbacks = dropped = failures = 0;
         cefNanos = cefMaxNanos = waitMaxNanos = maskNanos = maskMaxNanos = 0;
         reportStart = now;
