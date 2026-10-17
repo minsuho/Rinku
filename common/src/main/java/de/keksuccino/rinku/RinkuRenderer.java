@@ -176,7 +176,7 @@ public class RinkuRenderer {
         if (fresh) {
             if (texture != null) texture.close();
             texture = RenderSystem.getDevice().createTexture("Rinku Browser Texture " + width + "x" + height,
-                    GpuTexture.USAGE_TEXTURE_BINDING | GpuTexture.USAGE_COPY_DST, GpuFormat.RGBA8_UNORM, width, height, 1, 1);
+                    GpuTexture.USAGE_TEXTURE_BINDING | GpuTexture.USAGE_COPY_DST, TextureFormat.RGBA8, width, height, 1, 1);
             textureWidth = width;
             textureHeight = height;
         }
