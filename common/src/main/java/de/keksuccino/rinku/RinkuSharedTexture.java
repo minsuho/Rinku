@@ -43,6 +43,35 @@ final class RinkuSharedTexture {
     // with any visible web pixel counts as web (docs/gpu-shared-texture.md section 4.3, chosen 2026-10-16)
     static final int MASK_SCALE = 2;
     private static final boolean MASK_ENABLED = !"false".equals(System.getProperty("rinku.sharedMask"));
+
+    /**
+     * Targeted tests (docs/gpu-shared-texture.md S1): {@code -Drinku.sharedFault=<kind>[:<n>]} forces one failure, per
+     * browser, after its first {@code n} view paints (so the embedding mod's start-up test can still pass):
+     * {@code drop:n} drops every n-th view paint; {@code fail:n} imports fail; {@code stall:n} CEF's callbacks are
+     * ignored as if it stopped painting; {@code noupload:n} the render thread takes no more frames; {@code fence} every
+     * copy fence counts as timed out (the glFinish path); {@code consume:ms} the render thread holds each slot that long
+     * (a slow GPU), so both slots can be busy.
+     */
+    private static final String FAULT_KIND;
+    private static final long FAULT_N;
+
+    static {
+        String f = System.getProperty("rinku.sharedFault", "").trim();
+        int c = f.indexOf(':');
+        FAULT_KIND = c < 0 ? f : f.substring(0, c);
+        long n = 0;
+        try {
+            n = c < 0 ? 0 : Long.parseLong(f.substring(c + 1).trim());
+        } catch (NumberFormatException ignored) {
+            // no number: 0
+        }
+        FAULT_N = n;
+        if (!FAULT_KIND.isEmpty()) LogUtils.getLogger().warn("[shared] TEST FAULT {} {}", FAULT_KIND, FAULT_N);
+    }
+
+    private static boolean fault(String kind) {
+        return FAULT_KIND.equals(kind);
+    }
     private static int maskProgram, maskSizeUniform, maskVao, maskFbo, maskTexture, maskTexW, maskTexH, readFbo;
     private static boolean maskFailed;
     private static ByteBuffer maskRead;
@@ -52,7 +81,7 @@ final class RinkuSharedTexture {
     private static final class Slot {
         State state = State.EMPTY;
         int texture, width, height;
-        long frame, seq, readFence;
+        long frame, seq, readFence, readAt;
         int pixel00 = -1, pixel10 = -1;   // pixels 0,0 (open marker) and 1,0 (stamp probe) as 0xAARRGGBB, -1 unknown
     }
 
@@ -76,6 +105,10 @@ final class RinkuSharedTexture {
     private boolean popupPainted;   // popupTexture holds this showing's picture (not the last popup's)
 
     private final Slot[] slots = { new Slot(), new Slot() };
+    private long viewCallbacks, drains;   // for the test faults
+    // a paint was dropped (both slots busy): if it was the page's last for a while, the texture would keep an older
+    // picture, so the render thread asks CEF to paint again once a slot is free
+    private volatile boolean repaintWanted;
     private final Object lock = new Object();
     private long publishSeq;
     private boolean closed;
@@ -107,6 +140,28 @@ final class RinkuSharedTexture {
     static boolean enabled() {
         return enabled;
     }
+
+    /** Render thread, after {@link #drain}: true once when a dropped paint should be painted again and a slot is free. */
+    boolean takeRepaint() {
+        if (!repaintWanted) return false;
+        synchronized (lock) {
+            if (closed) return false;
+            for (Slot s : slots) {
+                if (s.state == State.EMPTY) {
+                    repaintWanted = false;
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /** CEF thread, before the paint number is taken: true while the stall test fault ignores CEF's callbacks. */
+    boolean ignoreCallback(boolean popup) {
+        return fault("stall") && !popup && ++stallCount > FAULT_N;
+    }
+
+    private long stallCount;
 
     /** Callbacks that could not import or copy the texture so far (approximate, any thread). */
     long failures() {
@@ -176,6 +231,18 @@ final class RinkuSharedTexture {
                 lastHeight = info.height;
                 LOGGER.info("[shared] #{} format {} size {}x{}", Integer.toHexString(id), info.format, info.width, info.height);
             }
+            if (!popup) {
+                viewCallbacks++;
+                if (fault("drop") && FAULT_N > 0 && viewCallbacks > FAULT_N && viewCallbacks % FAULT_N == 0) {
+                    dropped++;
+                    repaintWanted = true;
+                    return -1;
+                }
+                if (fault("fail") && viewCallbacks > FAULT_N) {
+                    failures++;
+                    return -1;
+                }
+            }
             if (popup) {
                 popups++;
                 if (popupRect == null) return -1;
@@ -190,6 +257,7 @@ final class RinkuSharedTexture {
             Slot slot = takeWritable();
             if (slot == null) {
                 dropped++;
+                repaintWanted = true;
                 return -1;
             }
             boolean done = false;
@@ -349,6 +417,7 @@ final class RinkuSharedTexture {
         long fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
         long waitStart = System.nanoTime();
         int result = glClientWaitSync(fence, GL_SYNC_FLUSH_COMMANDS_BIT, FENCE_TIMEOUT_NANOS);
+        if (fault("fence")) result = GL_TIMEOUT_EXPIRED;
         glDeleteSync(fence);
         if (result != GL_ALREADY_SIGNALED && result != GL_CONDITION_SATISFIED) {
             // the copy may still read the pooled texture: do not let the callback return before it ends
@@ -530,9 +599,12 @@ final class RinkuSharedTexture {
      */
     long drain(RinkuRenderer renderer) {
         Slot pick = null;
+        if (fault("noupload") && ++drains > FAULT_N) return -1;
+        long now = System.nanoTime();
         synchronized (lock) {
             if (closed) return -1;
             for (Slot s : slots) {
+                if (fault("consume") && s.state == State.READING && now - s.readAt < FAULT_N * 1_000_000L) continue;
                 if (s.state == State.READING && glClientWaitSync(s.readFence, 0, 0L) != GL_TIMEOUT_EXPIRED) {
                     glDeleteSync(s.readFence);
                     s.readFence = 0;
@@ -542,6 +614,7 @@ final class RinkuSharedTexture {
             for (Slot s : slots) if (s.state == State.DONE && (pick == null || s.seq > pick.seq)) pick = s;
             if (pick == null) return -1;
             pick.state = State.READING;
+            pick.readAt = now;
         }
         int target = renderer.sharedTarget(pick.width, pick.height, lastFormat == 1);
         glCopyImageSubData(pick.texture, GL_TEXTURE_2D, 0, 0, 0, 0, target, GL_TEXTURE_2D, 0, 0, 0, 0, pick.width, pick.height, 1);
