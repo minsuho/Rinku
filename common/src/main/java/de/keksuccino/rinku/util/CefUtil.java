@@ -107,6 +107,7 @@ public final class CefUtil {
         // Archive modes are canonicalized during extraction. This remains a non-destructive fallback
         // for installations copied by tools that discarded executable bits.
         ensureUnixExecutables(jcefInstallation, platform);
+        RinkuForkOptions.readGameGl();   // GTWebUI fork: the game's GPU for the shared texture, before the app handler asks
 
         RinkuSettings settings = Rinku.getSettings();
         ArrayList<String> cefSwitchesList = new ArrayList<>();
