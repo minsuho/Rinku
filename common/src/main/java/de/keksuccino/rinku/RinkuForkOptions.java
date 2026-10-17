@@ -40,6 +40,36 @@ public final class RinkuForkOptions {
         logFile = file == null ? null : file.toAbsolutePath().normalize();
     }
 
+    /**
+     * GTWebUI fork (M15-14): browsers created from now on paint through a shared D3D11 texture (Windows) instead of
+     * pixels. Needs Chromium's GPU compositing, which the embedding mod's app handler decides before CEF starts.
+     */
+    public static void setSharedTexture(boolean on) {
+        RinkuSharedTexture.setEnabled(on);
+    }
+
+    public static boolean sharedTexture() {
+        return RinkuSharedTexture.enabled();
+    }
+
+    /**
+     * GTWebUI fork: the game's GPU as its graphics device reports it, and whether that GL has the extensions the
+     * shared texture imports with — true when the device's extension list names them, null when it does not (the list
+     * holds only what the game uses: on an RTX 4060 it did not name them, though the import works). Null before the
+     * device exists.
+     */
+    public static @Nullable GpuInfo gpu() {
+        com.mojang.blaze3d.systems.GpuDevice device = com.mojang.blaze3d.systems.RenderSystem.tryGetDevice();
+        if (device == null) return null;
+        com.mojang.blaze3d.systems.DeviceInfo info = device.getDeviceInfo();
+        java.util.Set<String> ext = info.underlyingExtensions();
+        Boolean imports = ext.contains("GL_EXT_memory_object") && ext.contains("GL_EXT_memory_object_win32") ? Boolean.TRUE : null;
+        return new GpuInfo(info.name(), info.vendorName(), info.backendName() + " " + info.driverInfo(), imports);
+    }
+
+    /** @param importExtensions GL_EXT_memory_object and GL_EXT_memory_object_win32: true, or null when unknown */
+    public record GpuInfo(String name, String vendor, String driver, @Nullable Boolean importExtensions) {}
+
     public static @Nullable Path rootCachePath() {
         return rootCachePath;
     }
