@@ -119,6 +119,15 @@ public final class RinkuJcefInstaller implements AutoCloseable {
         return extractionDirectory;
     }
 
+    /**
+     * GTWebUI fork: where a launcher may leave this commit's release archive ({@code <commit>.tar.gz}, the release's
+     * {@code <platform>.tar.gz} renamed) with its {@code .sha256} beside it, for the game to install without the network.
+     */
+    public Path launcherArchive() {
+        requireOpenAndOwner();
+        return platformDirectory.resolve(javaCefCommit + ".tar.gz");
+    }
+
     public void recover() {
         requireOpenAndOwner();
         cleanupAbandonedStagingBestEffort();
