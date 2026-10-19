@@ -126,6 +126,26 @@ public class RinkuDownloader {
             if (reusable != null) {
                 return new InstallationResult(reusable, false);
             }
+            // GTWebUI fork: the launcher leaves the archive, the game installs it (docs/launcher-contract.md §3)
+            Path launcherArchive = installer.launcherArchive();
+            if (Files.exists(launcherArchive, LinkOption.NOFOLLOW_LINKS)) {
+                installer.prepareFresh();
+                try {
+                    Path installed = installFromLauncherArchive(installer, launcherArchive);
+                    deleteLauncherArchive(launcherArchive);
+                    return new InstallationResult(installed, false);
+                } catch (IOException | RuntimeException failure) {
+                    try {
+                        installer.discardPrepared();
+                    } catch (Throwable cleanupFailure) {
+                        failure.addSuppressed(cleanupFailure);
+                    }
+                    if (skipDownload) {
+                        throw new IOException("skip-download=true and the launcher-placed JCEF archive " + launcherArchive.getFileName() + " could not be installed", failure);
+                    }
+                    LOGGER.warn("The launcher-placed JCEF archive {} could not be installed; downloading instead", launcherArchive.getFileName(), failure);
+                }
+            }
             if (skipDownload) {
                 throw new IOException("skip-download=true but the exact JCEF commit has no complete valid local installation");
             }
@@ -171,6 +191,36 @@ public class RinkuDownloader {
             extractArchive(archive, actualDigest, installer.extractionDirectory().toFile());
         }
         return installer.publish();
+    }
+
+    /** GTWebUI fork: the same checks as a download (the .sha256 is always required), from the launcher's file in place. */
+    private Path installFromLauncherArchive(RinkuJcefInstaller installer, Path archivePath) throws IOException {
+        LOGGER.info("Installing JCEF from the launcher-placed archive {}", archivePath.getFileName());
+        String expectedChecksum = readChecksum(archivePath.resolveSibling(archivePath.getFileName() + ".sha256").toFile(), true);
+        if (expectedChecksum == null) {
+            throw new IOException("The launcher-placed JCEF archive has no .sha256 beside it");
+        }
+        try (RinkuVerifiedArchiveSource archive = RinkuVerifiedArchiveSource.open(archivePath, downloadPolicy.maxArchiveBytes())) {
+            String actualDigest = archive.calculateDigest();
+            if (!expectedChecksum.equals(actualDigest)) {
+                throw new IOException("Checksum mismatch for the launcher-placed JCEF archive");
+            }
+            extractArchive(archive, actualDigest, installer.extractionDirectory().toFile());
+        }
+        return installer.publish();
+    }
+
+    /** Installed: the archive is not needed again (the launcher skips it while the commit folder is complete). */
+    private static void deleteLauncherArchive(Path archivePath) {
+        for (Path p : List.of(archivePath, archivePath.resolveSibling(archivePath.getFileName() + ".sha256"))) {
+            try {
+                if (Files.isRegularFile(p, LinkOption.NOFOLLOW_LINKS)) {
+                    Files.delete(p);
+                }
+            } catch (IOException failure) {
+                LOGGER.warn("Could not delete the installed launcher-placed JCEF archive file {}", p.getFileName(), failure);
+            }
+        }
     }
 
     private String downloadChecksumFromMirror(RinkuJcefInstaller installer, RinkuDownloadMirror mirror) throws IOException {
